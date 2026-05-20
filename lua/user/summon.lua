@@ -41,7 +41,12 @@ local function ago(t)
 end
 
 function M.show()
-  if #history == 0 then vim.notify("summon: nothing to recall yet") return end
+  if #history == 0 then
+    local ok, brand = pcall(require, "user.brand")
+    if ok then brand.notify("no windows to recall yet · open and close a few panels first", vim.log.levels.INFO, { title = "summon" })
+    else vim.notify("summon: nothing to recall yet") end
+    return
+  end
   local items = {}
   for _, h in ipairs(history) do
     table.insert(items, string.format("[%-8s]  %s", ago(h.time), h.label))

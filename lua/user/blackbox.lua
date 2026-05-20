@@ -34,7 +34,12 @@ local function format_entry(e)
 end
 
 function M.show()
-  if #log == 0 then vim.notify("Blackbox empty (just started recording)") return end
+  if #log == 0 then
+    local ok, brand = pcall(require, "user.brand")
+    if ok then brand.notify("the black box is quiet · come back after you've done a few things", vim.log.levels.INFO, { title = "blackbox" })
+    else vim.notify("Blackbox empty (just started recording)") end
+    return
+  end
   local lines = { "  BLACK BOX  ·  " .. #log .. " events  ·  newest first" }
   table.insert(lines, string.rep("─", 100))
   for _, e in ipairs(log) do table.insert(lines, format_entry(e)) end

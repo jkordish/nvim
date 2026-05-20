@@ -41,41 +41,49 @@ return {
       picker = { enabled = false },    -- using telescope
       dashboard = {
         enabled = true,
+        -- A calm dashboard: a wordmark, a time-aware greeting, and only the
+        -- three actions you actually open nvim to do. Recent files and the
+        -- git pane appear underneath, quietly. No version chest-thumping.
         preset = {
-          header = [[
-███╗   ██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗
-████╗  ██║██╔════╝██╔═══██╗██║   ██║██║████╗ ████║
-██╔██╗ ██║█████╗  ██║   ██║██║   ██║██║██╔████╔██║
-██║╚██╗██║██╔══╝  ██║   ██║╚██╗ ██╔╝██║██║╚██╔╝██║
-██║ ╚████║███████╗╚██████╔╝ ╚████╔╝ ██║██║ ╚═╝ ██║
-╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝   banger config]],
+          -- A small, kerned wordmark instead of the giant ASCII banner.
+          header = function()
+            local brand = require("user.brand")
+            local greet = brand.greeting()
+            local user  = (vim.env.USER or ""):match("^[^.]+") or ""
+            return table.concat({
+              "",
+              "         ◆  nvim",
+              "",
+              "         " .. greet .. (user ~= "" and (", " .. user) or "") .. ".",
+              "",
+            }, "\n")
+          end,
           keys = {
-            { icon = " ", key = "f", desc = "Find file",      action = ":Telescope find_files" },
-            { icon = " ", key = "n", desc = "New file",       action = ":ene | startinsert" },
-            { icon = " ", key = "g", desc = "Live grep",      action = ":Telescope live_grep" },
-            { icon = " ", key = "r", desc = "Recent files",   action = ":Telescope oldfiles" },
-            { icon = " ", key = "p", desc = "Projects",       action = ":Telescope projects" },
-            { icon = " ", key = "s", desc = "Restore session", action = function() require("persistence").load() end },
-            { icon = "󰒲 ", key = "l", desc = "Lazy",           action = ":Lazy" },
-            { icon = " ", key = "m", desc = "Mason",          action = ":Mason" },
-            { icon = " ", key = "c", desc = "Config",         action = ":e $MYVIMRC" },
-            { icon = " ", key = "q", desc = "Quit",           action = ":qa" },
+            { icon = "  ", key = "f", desc = "find a file",        action = ":Telescope find_files" },
+            { icon = "  ", key = "g", desc = "grep the project",   action = ":Telescope live_grep" },
+            { icon = "  ", key = "r", desc = "pick up where I was", action = function() require("persistence").load() end },
+            -- separator-style empty slot, then quieter secondary actions
+            { icon = " ◇ ", key = "n", desc = "new buffer",         action = ":ene | startinsert" },
+            { icon = " ◇ ", key = "c", desc = "edit config",        action = ":e $MYVIMRC" },
+            { icon = " ◇ ", key = "q", desc = "quit",               action = ":qa" },
           },
         },
         sections = {
           { section = "header" },
-          { section = "keys",     gap = 1, padding = 1 },
-          { section = "recent_files", icon = " ", title = "Recent Files",  indent = 2, padding = 1 },
-          { section = "projects",     icon = " ", title = "Projects",       indent = 2, padding = 1 },
-          { pane = 2, icon = " ", title = "Git Status", section = "terminal",
+          { section = "keys", gap = 1, padding = 1 },
+          { section = "recent_files", icon = "  ", title = "recent", indent = 4, padding = { 1, 1 }, limit = 5 },
+          { pane = 2, icon = "  ", title = "git", section = "terminal",
             enabled = function() return Snacks.git.get_root() ~= nil end,
-            cmd = "git status --short --branch --renames", height = 5, padding = 1, ttl = 5 * 60, indent = 3,
+            cmd = "git status --short --branch", height = 4, padding = 1, ttl = 5 * 60, indent = 3,
           },
-          { pane = 2, icon = " ", title = "Recent Branches", section = "terminal",
+          { pane = 2, icon = "  ", title = "recent commits", section = "terminal",
             enabled = function() return Snacks.git.get_root() ~= nil end,
-            cmd = "git --no-pager log --pretty=format:'%C(magenta)%h %C(white) %an  %ar%C(yellow)  %s%C(reset)' -5", height = 6, padding = 1, ttl = 5 * 60, indent = 3,
+            cmd = "git --no-pager log --pretty=format:'%C(magenta)%h%C(white) %an %C(blue)%ar  %C(reset)%s' -4", height = 5, padding = 1, ttl = 5 * 60, indent = 3,
           },
-          { section = "startup" },
+          -- intentionally omit "startup time" — premium software doesn't brag
+        },
+        formats = {
+          key = { "[%s]", hl = "BrandAccent" },
         },
       },
     },

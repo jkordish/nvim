@@ -7,13 +7,34 @@ return {
     "rcarriga/nvim-notify",
     event = "VeryLazy",
     opts = {
-      timeout = 2500,
+      timeout = 2200,
       max_height = function() return math.floor(vim.o.lines * 0.75) end,
-      max_width = function() return math.floor(vim.o.columns * 0.5) end,
-      stages = "fade",
-      render = "compact",
+      max_width  = function() return math.min(80, math.floor(vim.o.columns * 0.4)) end,
+      stages     = "slide",          -- subtle horizontal motion, premium-er than fade
+      render     = "wrapped-default", -- shows title in a chip on left, multi-line body
+      top_down   = false,             -- newest at bottom-right — calmer
+      background_colour = "#1e1e2e",
+      icons = { ERROR = "●", WARN = "●", INFO = "●", DEBUG = "●", TRACE = "●" },
+      minimum_width = 28,
+      fps = 60,
+      level = vim.log.levels.INFO,
     },
-    init = function() vim.notify = require("notify") end,
+    config = function(_, opts)
+      local notify = require("notify")
+      notify.setup(opts)
+      vim.notify = notify
+      -- Tint the level colors to match the brand palette
+      vim.api.nvim_set_hl(0, "NotifyERRORBorder", { fg = "#f38ba8" })
+      vim.api.nvim_set_hl(0, "NotifyWARNBorder",  { fg = "#f9e2af" })
+      vim.api.nvim_set_hl(0, "NotifyINFOBorder",  { fg = "#cba6f7" })  -- brand accent
+      vim.api.nvim_set_hl(0, "NotifyDEBUGBorder", { fg = "#7287fd" })
+      vim.api.nvim_set_hl(0, "NotifyTRACEBorder", { fg = "#94e2d5" })
+      vim.api.nvim_set_hl(0, "NotifyERRORTitle",  { fg = "#f38ba8", bold = true })
+      vim.api.nvim_set_hl(0, "NotifyWARNTitle",   { fg = "#f9e2af", bold = true })
+      vim.api.nvim_set_hl(0, "NotifyINFOTitle",   { fg = "#cba6f7", bold = true })
+      vim.api.nvim_set_hl(0, "NotifyDEBUGTitle",  { fg = "#7287fd", bold = true })
+      vim.api.nvim_set_hl(0, "NotifyTRACETitle",  { fg = "#94e2d5", bold = true })
+    end,
   },
 
   {
@@ -248,17 +269,14 @@ return {
             search,
             { function() local ok, n = pcall(require, "noice"); return ok and n.api.status.command.has() and n.api.status.command.get() or "" end },
           },
-          -- X: live indicators (warnings, jobs, pomo, overseer, autoformat, copilot, lsp, ts, indent)
+          -- X: live indicators — only what's *currently happening*. Everything
+          -- else is hidden until it has something to say. Restraint > density.
           lualine_x = {
-            user_warnings,
-            user_jobs,
-            pomo_timer,
-            overseer_tasks,
-            autoformat,
-            copilot,
-            lsp,
-            treesitter,
-            indent,
+            user_jobs,        -- shows only when jobs running
+            pomo_timer,       -- shows only during a pomo
+            overseer_tasks,   -- shows only when tasks exist
+            autoformat,       -- shows only when disabled
+            copilot,          -- subtle icon
           },
           -- Y: starship-style right chain (lang version + venv  docker  k8s  aws  battery  time)
           lualine_y = { starship_right },

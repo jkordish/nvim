@@ -3,7 +3,7 @@ return {
   -- VIRTUAL_ENV and reroutes pyright/ruff at the project's python.
   {
     "linux-cultist/venv-selector.nvim",
-    branch = "regexp",
+    -- branch = "regexp" was removed upstream — main is the canonical branch now
     ft = "python",
     dependencies = {
       "neovim/nvim-lspconfig",

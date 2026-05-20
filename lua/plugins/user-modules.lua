@@ -7,6 +7,10 @@ return {
     lazy = false,
     priority = 100,
     config = function()
+      -- Brand/design system FIRST so subsequent modules can use it.
+      require("user.brand").setup()
+      require("user.curtain").setup()
+      require("user.welcome").setup()
       require("user.yankring").setup()
       require("user.ai_cmd").setup()
       require("user.perfhud").setup()
@@ -150,6 +154,8 @@ return {
       { "<leader>Au", function() require("user.summon").show() end,      desc = "Summon: recall closed window" },
       { "<leader>Ao", function() vim.cmd("Oracle") end,                  desc = "Oracle: ask yes/no" },
       { "<leader>AM", function() require("user.mirror").toggle() end,    desc = "Mirror: reversed reflection" },
+      -- Welcome
+      { "<leader>AW", function() require("user.welcome").run() end,      desc = "Welcome: play the intro ritual" },
     },
   },
 }

@@ -60,7 +60,12 @@ local function format_preview(entry)
 end
 
 function M.pick()
-  if #ring == 0 then vim.notify("Yank ring empty", vim.log.levels.INFO); return end
+  if #ring == 0 then
+    local ok, brand = pcall(require, "user.brand")
+    if ok then brand.notify("yank ring is quiet · try yanking with " .. brand.kbd("y"), vim.log.levels.INFO, { title = "yank" })
+    else vim.notify("Yank ring empty", vim.log.levels.INFO) end
+    return
+  end
   -- Try telescope first for nicer UI
   local ok, telescope = pcall(require, "telescope.pickers")
   if not ok then return M._pick_native() end

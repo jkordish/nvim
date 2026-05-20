@@ -39,26 +39,31 @@ local function render()
   if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then return end
   local top, stats = top_plugins(5)
   local lsps = attached_lsps()
+  -- Premium card layout: label/value pairs, right-aligned values, single
+  -- divider, generous breathing room above and below.
+  local function row(label, value)
+    local pad = 48 - vim.api.nvim_strwidth(label) - vim.api.nvim_strwidth(value) - 4
+    return "  " .. label .. string.rep(" ", math.max(1, pad)) .. value .. "  "
+  end
   local lines = {
-    "  Performance HUD",
-    "  ─────────────────────────────────",
-    string.format("  fps          %d", state.fps),
-    string.format("  rss          %d MB", rss_mb()),
-    string.format("  uptime       %.1f s", (vim.uv.now() - (state.start_ms or vim.uv.now())) / 1000),
-    string.format("  plugins      %d loaded / %d total", stats.loaded, stats.count),
-    string.format("  startup      %.1f ms", stats.startuptime or 0),
-    string.format("  lsp clients  %d (%s)", #lsps, table.concat(lsps, ",")),
-    string.format("  treesitter   %s", ts_active()),
-    string.format("  lsp reqs/s   %d", state.lsp_reqs),
     "",
-    "  top 5 slowest plugins (ms)",
-    "  ─────────────────────────────────",
+    row("fps",           tostring(state.fps)),
+    row("memory",        rss_mb() .. " mb"),
+    row("uptime",        string.format("%.0f s", (vim.uv.now() - (state.start_ms or vim.uv.now())) / 1000)),
+    row("plugins",       stats.loaded .. " / " .. stats.count),
+    row("startup",       string.format("%.0f ms", stats.startuptime or 0)),
+    row("lsp clients",   #lsps == 0 and "—" or table.concat(lsps, ", ")),
+    row("treesitter",    ts_active() == "yes" and "on" or "—"),
+    row("lsp req/sec",   tostring(state.lsp_reqs)),
+    "",
+    "    ───────────────  slowest to load",
+    "",
   }
   for _, p in ipairs(top) do
-    table.insert(lines, string.format("  %6.1f  %s", p.ms, p.name))
+    table.insert(lines, row(p.name, string.format("%.0f ms", p.ms)))
   end
   table.insert(lines, "")
-  table.insert(lines, "  [r] reset · [c] close · auto-refresh 500ms")
+  table.insert(lines, "    " .. "r reset    c close")
 
   vim.bo[state.buf].modifiable = true
   vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
@@ -94,11 +99,11 @@ local function open()
   local width, height = 50, 22
   state.win = vim.api.nvim_open_win(state.buf, false, {
     relative = "editor", style = "minimal", border = "rounded",
-    title = " ⚡ perf hud ", title_pos = "center",
+    title = "  ◆  perf  ", title_pos = "left",
     width = width, height = height,
     row = 1, col = vim.o.columns - width - 2, focusable = true,
   })
-  vim.wo[state.win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
+  vim.wo[state.win].winhighlight = "Normal:BrandFloat,FloatBorder:BrandFloatBorder,FloatTitle:BrandFloatTitle"
 
   vim.keymap.set("n", "c", function() M.close() end, { buffer = state.buf, silent = true })
   vim.keymap.set("n", "q", function() M.close() end, { buffer = state.buf, silent = true })
