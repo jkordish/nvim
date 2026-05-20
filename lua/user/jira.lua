@@ -15,6 +15,7 @@
 local M = {}
 
 local brand = require("user.brand")
+local icons = require("user.icons")
 
 -- ─── config from env ──────────────────────────────────────────────────────
 local function cfg()
@@ -197,7 +198,7 @@ function M.search(jql, cb, max)
   -- picker chips get Jira's real category color without extra `expand`.
   request("POST", "/rest/api/3/search/jql", {
     jql = jql,
-    fields = { "summary", "status", "assignee", "priority", "updated" },
+    fields = { "summary", "status", "assignee", "priority", "updated", "issuetype" },
     maxResults = max or 50,
   }, cb)
 end
@@ -425,11 +426,13 @@ local function render_issue(buf, data, key)
 
   local lines = {}
   local nav   = {}    -- row → { kind = "issue", key = "..." }
+  local ticon = icons.issuetype(itype).icon
+  local picon = icons.priority(priority).icon
   table.insert(lines, "")
-  table.insert(lines, "    " .. key .. "    " .. summary)
+  table.insert(lines, ("    %s %s    %s"):format(ticon, key, summary))
   table.insert(lines, "")
   table.insert(lines, "     status    " .. status)
-  table.insert(lines, "     type      " .. itype .. "      priority  " .. priority)
+  table.insert(lines, ("     type      %s %s      priority  %s %s"):format(ticon, itype, picon, priority))
   table.insert(lines, "     assignee  " .. assignee .. "      reporter  " .. reporter)
   -- parent (epic / story)
   if fields.parent then
@@ -516,10 +519,13 @@ local function render_issue(buf, data, key)
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
 
-  -- highlight key + summary
+  -- highlight key + summary (account for ticon glyph prefix)
+  local key_col = 4 + #ticon + 1
   pcall(vim.api.nvim_buf_set_extmark, buf, NS, 1, 4,
-    { end_col = 4 + #key, hl_group = "BrandChipAccent" })
-  pcall(vim.api.nvim_buf_set_extmark, buf, NS, 1, 4 + #key,
+    { end_col = 4 + #ticon, hl_group = "BrandAccent" })
+  pcall(vim.api.nvim_buf_set_extmark, buf, NS, 1, key_col,
+    { end_col = key_col + #key, hl_group = "BrandChipAccent" })
+  pcall(vim.api.nvim_buf_set_extmark, buf, NS, 1, key_col + #key,
     { end_col = #lines[2], hl_group = "BrandFloatTitle" })
   -- highlight status chip — pass the full status object so we get its
   -- statusCategory color when available, not just a name heuristic
@@ -935,8 +941,11 @@ local function pick_from_search(title, issues, opts)
     for _, it in ipairs(filtered) do
       local f = it.fields or {}
       local status = ((f.status or {}).name or "?"):sub(1, 14)
-      local summ   = ((f.summary or ""):gsub("\n.*", "")):sub(1, list_w - 36)
-      table.insert(rows, string.format(" %-12s  %-14s  %s", it.key, status, summ))
+      local summ   = ((f.summary or ""):gsub("\n.*", "")):sub(1, list_w - 42)
+      local ticon  = icons.issuetype((f.issuetype or {}).name).icon
+      local picon  = icons.priority((f.priority or {}).name).icon
+      table.insert(rows, string.format(" %s %-12s %s %-14s  %s",
+        ticon, it.key, picon, status, summ))
     end
     if #rows == 0 then rows = { "", "    (no matches — press \\ to clear filter)" } end
     vim.bo[list_buf].modifiable = true
@@ -944,12 +953,25 @@ local function pick_from_search(title, issues, opts)
     vim.bo[list_buf].modifiable = false
     vim.api.nvim_buf_clear_namespace(list_buf, lns, 0, -1)
     for i, it in ipairs(filtered) do
+      local f = it.fields or {}
+      local ticon = icons.issuetype((f.issuetype or {}).name).icon
+      local picon = icons.priority((f.priority or {}).name).icon
+      -- " " + ticon + " " + %-12s(key) + " " + picon + " " + %-14s(status) + "  " + summ
+      local key_start    = 1 + #ticon + 1
+      local key_end      = key_start + #it.key
+      local status_start = key_start + 12 + 1 + #picon + 1
+      local status_obj   = f.status or {}
+      local sname        = status_obj.name or ""
+      -- icon highlights
       pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, 1,
-        { end_col = 1 + #it.key, hl_group = "BrandAccent" })
-      local status_obj = (it.fields or {}).status or {}
-      local sname = status_obj.name or ""
-      pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, 15,
-        { end_col = 15 + math.min(14, #sname), hl_group = status_chip_group(status_obj) })
+        { end_col = 1 + #ticon, hl_group = "BrandAccent" })
+      pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, key_end + 1,
+        { end_col = key_end + 1 + #picon, hl_group = "BrandAccent" })
+      -- key + status chip
+      pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, key_start,
+        { end_col = key_end, hl_group = "BrandAccent" })
+      pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, status_start,
+        { end_col = status_start + math.min(14, #sname), hl_group = status_chip_group(status_obj) })
     end
     if #filtered > 0 then pcall(vim.api.nvim_win_set_cursor, list_win, { 1, 0 }) end
   end
@@ -1036,12 +1058,14 @@ local function pick_from_search(title, issues, opts)
   for _, k in ipairs({ "q", "<Esc>" }) do
     vim.keymap.set("n", k, close_all, kopts)
   end
-  vim.keymap.set("n", "<CR>", function()
+  local function activate()
     local k = selected_key(); if not k then return end
     close_all()
     if on_select then vim.schedule(function() on_select(k) end)
     else vim.schedule(function() M.show_issue(k) end) end
-  end, kopts)
+  end
+  vim.keymap.set("n", "<CR>",          activate, kopts)
+  vim.keymap.set("n", "<2-LeftMouse>", activate, kopts)   -- double-click executes
   vim.keymap.set("n", "o", function()
     local k = selected_key(); if k then M.open_in_browser(k) end
   end, kopts)
@@ -1052,6 +1076,23 @@ local function pick_from_search(title, issues, opts)
   vim.keymap.set("n", "t", function()
     local k = selected_key(); close_all()
     if k then vim.schedule(function() M.prompt_transition(k) end) end
+  end, kopts)
+  -- right-click → action menu (cursor follows the click, so single-click first
+  -- selects the row; the menu acts on that row)
+  vim.keymap.set("n", "<RightMouse>", function()
+    vim.cmd("normal! \\<LeftMouse>")
+    local k = selected_key(); if not k then return end
+    vim.ui.select({
+      "open detail", "open in browser", "comment", "transition", "assign", "cancel",
+    }, { prompt = k .. ": " }, function(choice)
+      if not choice or choice == "cancel" then return end
+      if     choice == "open detail"     then close_all(); vim.schedule(function() M.show_issue(k) end)
+      elseif choice == "open in browser" then M.open_in_browser(k)
+      elseif choice == "comment"         then close_all(); vim.schedule(function() M.prompt_comment(k) end)
+      elseif choice == "transition"      then close_all(); vim.schedule(function() M.prompt_transition(k) end)
+      elseif choice == "assign"          then close_all(); vim.schedule(function() M.prompt_assignee(k) end)
+      end
+    end)
   end, kopts)
   -- live filter
   vim.keymap.set("n", "/", function()
@@ -1099,22 +1140,52 @@ function M.show_mine()
   end)
 end
 
+-- Decide whether `input` looks like real JQL or freeform text. We treat it
+-- as JQL only if it contains one of the structural tokens — any operator
+-- (=, !=, ~, <, >), an explicit IN/IS, a parenthesized clause, or a keyword
+-- like ORDER BY. Anything else (bare words, multi-word phrases) is wrapped
+-- as `text ~ "..."` so the search just works.
+local function looks_like_jql(s)
+  if s:find("[=~<>]") then return true end
+  if s:find("[%(%)]") then return true end
+  local up = " " .. s:upper() .. " "
+  for _, tok in ipairs({ " IN ", " IS ", " NOT ", " AND ", " OR ", " ORDER BY ", " EMPTY " }) do
+    if up:find(tok, 1, true) then return true end
+  end
+  return false
+end
+
 function M.show_search(jql)
   if not jql or jql == "" then
-    vim.ui.input({ prompt = "JQL: " }, function(q)
+    vim.ui.input({ prompt = "JQL or text: " }, function(q)
       if q and q ~= "" then M.show_search(q) end
     end)
     return
   end
-  brand.notify("searching …", nil, { title = "jira" })
-  M.search(jql, function(ok, data)
+
+  -- Shortcut: bare issue key (e.g. "XDR-123") → just open the issue.
+  local bare_key = jql:match("^%s*([A-Z][A-Z0-9]+%-%d+)%s*$")
+  if bare_key then return M.show_issue(bare_key:upper()) end
+
+  -- If it doesn't look like JQL, wrap it as a text search so users can type
+  -- plain phrases without learning the query language.
+  local query = jql
+  if not looks_like_jql(jql) then
+    local escaped = jql:gsub('\\', '\\\\'):gsub('"', '\\"')
+    query = ('text ~ "%s" ORDER BY updated DESC'):format(escaped)
+    brand.notify("(text search) " .. query, nil, { title = "jira" })
+  else
+    brand.notify("searching …", nil, { title = "jira" })
+  end
+
+  M.search(query, function(ok, data)
     if not ok then
       brand.notify("search failed: " .. tostring(data), vim.log.levels.ERROR, { title = "jira" })
       return
     end
     pick_from_search("search", data.issues or {}, {
       on_refresh = function(cb)
-        M.search(jql, function(rok, rdata) cb(rok and rdata.issues or {}) end, 50)
+        M.search(query, function(rok, rdata) cb(rok and rdata.issues or {}) end, 50)
       end,
     })
   end, 50)

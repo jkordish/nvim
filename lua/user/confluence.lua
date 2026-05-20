@@ -10,6 +10,7 @@
 local M = {}
 
 local brand = require("user.brand")
+local icons = require("user.icons")
 
 -- ─── persistent cache (recent pages) ──────────────────────────────────────
 local CACHE_FILE = vim.fn.stdpath("state") .. "/confluence_cache.json"
@@ -458,8 +459,11 @@ local function pick_pages(title, items, opts)
     pcall(vim.api.nvim_win_set_config, list_win, { title = brand.title(title_text, { glyph = "◆" }) })
     local rows = {}
     for _, it in ipairs(filtered) do
+      local picon = icons.page_type(it.type or "page").icon
       table.insert(rows,
-        string.format(" %-8s  %s", (it.type or "page"):sub(1, 8), (it.title or "(?)"):sub(1, list_w - 14)))
+        string.format(" %s  %-8s  %s",
+          picon, (it.type or "page"):sub(1, 8),
+          (it.title or "(?)"):sub(1, list_w - 18)))
     end
     if #rows == 0 then rows = { "", "    (no matches — press \\ to clear filter)" } end
     vim.bo[list_buf].modifiable = true
@@ -538,15 +542,29 @@ local function pick_pages(title, items, opts)
   for _, k in ipairs({ "q", "<Esc>" }) do
     vim.keymap.set("n", k, close_all, kopts)
   end
-  vim.keymap.set("n", "<CR>", function()
+  local function activate()
     local it = selected_item(); if not it then return end
     close_all()
     if opts.on_select then vim.schedule(function() opts.on_select(it) end)
     else vim.schedule(function() M.show_page(it.id) end) end
-  end, kopts)
+  end
+  vim.keymap.set("n", "<CR>",          activate, kopts)
+  vim.keymap.set("n", "<2-LeftMouse>", activate, kopts)
   vim.keymap.set("n", "o", function()
     local it = selected_item()
     if it and c then vim.ui.open(c.base .. "/wiki/spaces/_/pages/" .. it.id) end
+  end, kopts)
+  vim.keymap.set("n", "<RightMouse>", function()
+    vim.cmd("normal! \\<LeftMouse>")
+    local it = selected_item(); if not it then return end
+    vim.ui.select({ "open", "open in browser", "cancel" },
+      { prompt = (it.title or it.id) .. ": " }, function(choice)
+        if not choice or choice == "cancel" then return end
+        if choice == "open" then activate()
+        elseif choice == "open in browser" and c then
+          vim.ui.open(c.base .. "/wiki/spaces/_/pages/" .. it.id)
+        end
+      end)
   end, kopts)
   vim.keymap.set("n", "/", function()
     vim.ui.input({ prompt = "filter: ", default = filter }, function(v)

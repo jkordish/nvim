@@ -877,16 +877,38 @@ local function render(c, items)
   vim.api.nvim_buf_clear_namespace(panel.buf, PREVIEW_NS, 0, -1)
 
   -- The top item's predicted-next gets a hint line directly under it.
-  -- Each row layout: "  [ N ] [ ● ] [▸] label"
+  -- Each row layout: "  [ N ] [ ● ] [▸] [icon] label"
   --   ` N ` digit chip (3 cols: space + digit + space)  — accent for top, surface for rest
   --   ` ● ` learned chip (3 cols)                       — ok-green, omitted if not learned
   --   `▸`  project-action marker                        — info-blue, omitted if not project
+  --   icon — category glyph inferred from the action id
+  local _icons = require("user.icons")
+  local function _cat_for(id)
+    if not id then return "default" end
+    if id:find("^jira_")       then return "jira" end
+    if id:find("^confluence_") then return "confluence" end
+    if id:find("test")         then return "test" end
+    if id:find("repl")         then return "repl" end
+    if id:find("commit") or id:find("git_") or id:find("hunk") then return "git" end
+    if id:find("ai_")          then return "ai" end
+    if id:find("save") or id:find("format_") or id:find("open_test_pair")
+       or id:find("open_readme") or id:find("open_env") or id:find("swap_other") then return "file" end
+    if id:find("find_") or id:find("grep") or id == "spotlight" or id == "browse_todos" then return "search" end
+    if id:find("diag") or id:find("fix_error") or id == "code_action" then return "diag" end
+    if id:find("shell") or id == "rest_send" then return "shell" end
+    if id == "run_macro"        then return "macro" end
+    if id:find("journal") or id == "homunculus" then return "journal" end
+    if id:find("workspace") or id:find("playbook") or id == "restore_session"
+       or id == "wind_down" or id == "engage_cockpit" or id == "review_state" then return "workspace" end
+    return "default"
+  end
   local lines = { "" }
   for i, it in ipairs(items) do
-    local digit = (" %d "):format(i)                                  -- ` 1 ` (3 cols)
-    local learned = it.learned     and " ● " or "   "                 -- chip or 3 spaces
-    local origin  = it.is_project  and "▸ "  or "  "                  -- 2 cols
-    table.insert(lines, string.format("  %s %s %s%s", digit, learned, origin, it.label))
+    local digit = (" %d "):format(i)
+    local learned = it.learned     and " ● " or "   "
+    local origin  = it.is_project  and "▸ "  or "  "
+    local cat_icon = _icons.cat(_cat_for(it.id)).icon
+    table.insert(lines, string.format("  %s %s %s%s  %s", digit, learned, origin, cat_icon, it.label))
     panel.item_rows[i] = #lines - 1  -- record 0-indexed row of this item for preview targeting
     -- Only show the playbook hint on the #1 ranked suggestion to avoid noise
     if i == 1 and it.next_hint then

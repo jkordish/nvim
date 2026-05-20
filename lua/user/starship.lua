@@ -36,6 +36,60 @@ local function find_up(name)
   end
 end
 
+-- ─── visual helpers (sparklines, gauges, dots) ────────────────────────────
+-- Reusable shape primitives. All cheap; no allocation in hot path except a
+-- single table.concat per call.
+local SPARK = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
+local BAR_LEVELS = { " ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
+local DOT_ON, DOT_OFF = "●", "○"
+
+-- History-based sparkline. Push `value` into the per-key ring buffer of size
+-- `cap`, then render normalized to `max`. If `max` is omitted, normalizes
+-- to the buffer's own peak — fine for trend-only signals but bad for steady
+-- absolutes (a flat 99% RAM would render as all █). Pass `max` when the
+-- value has a natural ceiling (100 for %, ncores*1.5 for load avg, etc).
+M._spark = {}
+function M.spark(key, value, cap, max)
+  cap = cap or 10
+  local s = M._spark[key]
+  if not s then s = { samples = {} }; M._spark[key] = s end
+  s.samples[#s.samples + 1] = value
+  while #s.samples > cap do table.remove(s.samples, 1) end
+  -- Determine scale: fixed if provided, else use the running max in the buffer
+  local scale = max
+  if not scale then
+    scale = 0.0001
+    for _, v in ipairs(s.samples) do if v > scale then scale = v end end
+  end
+  if scale <= 0 then scale = 0.0001 end
+  local out = {}
+  for i, v in ipairs(s.samples) do
+    -- floor + 1 ensures equal-spaced bands (0..0.125 → ▁, 0.125..0.25 → ▂, …),
+    -- so a steady 99% reads as `▇` and a flat 1% reads as `▁`, not all `█`.
+    local norm = math.max(0, math.min(1, v / scale))
+    local idx = math.min(#SPARK, math.floor(norm * #SPARK) + 1)
+    out[i] = SPARK[idx]
+  end
+  return table.concat(out, "")
+end
+
+-- N-cell horizontal gauge for a single value 0..max. Returns `width` chars.
+function M.bar(value, max, width)
+  width = width or 4
+  if not max or max == 0 then max = 1 end
+  local norm = math.max(0, math.min(1, value / max))
+  local idx = math.floor(norm * #BAR_LEVELS) + 1
+  if idx > #BAR_LEVELS then idx = #BAR_LEVELS end
+  return string.rep(BAR_LEVELS[idx], width)
+end
+
+-- ●●●○○ progress: `filled` of `total` dots filled. Clamps to [0, total].
+function M.dots(filled, total)
+  total = total or 5
+  filled = math.max(0, math.min(total, filled))
+  return string.rep(DOT_ON, filled) .. string.rep(DOT_OFF, total - filled)
+end
+
 -- ─── modules (segments). Each returns {text, fg} or {"", nil} when inactive ──
 M.modules = {}
 
@@ -349,21 +403,24 @@ function M.modules.cmd_duration()
   return { text = ("  took %s "):format(txt), fg = M.c.yellow, bg = M.c.surface, gui = "italic" }
 end
 
--- CPU LOAD — sparkline of recent load averages
-local SPARK = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
+-- CPU LOAD — rolling sparkline of normalized 1-min load (last 10 samples)
 function M.modules.cpu()
   local s = memo("cpu", 4000, function()
-    -- macOS + linux both have `uptime` with load averages
     local out = trim(vim.fn.system("uptime 2>/dev/null"))
     local one = tonumber(out:match("load averages?:%s*([%d%.]+)") or out:match("load average:%s*([%d%.]+)"))
     if not one then return "" end
     local cores = tonumber(vim.fn.system("getconf _NPROCESSORS_ONLN 2>/dev/null") or "1") or 1
-    local norm = math.min(1, one / cores)
-    local idx = math.max(1, math.ceil(norm * #SPARK))
-    return SPARK[idx] .. SPARK[idx] .. SPARK[idx] .. (" %.2f"):format(one)
+    return ("%.2f|%d"):format(one, cores)
   end)
   if s == "" then return { text = "" } end
-  return { text = (" cpu %s "):format(s), fg = M.c.text, bg = M.c.surface }
+  local one_str, cores_str = s:match("([%d%.]+)|(%d+)")
+  local one, cores = tonumber(one_str) or 0, tonumber(cores_str) or 1
+  local norm = one / math.max(1, cores)   -- 0 = idle, 1 = fully loaded
+  -- Fixed scale 0..1.5 so a flat 50%-loaded box reads as ▅, not █.
+  local spark = M.spark("cpu", norm, 6, 1.5)
+  local fg = M.c.text
+  if norm > 1 then fg = M.c.red elseif norm > 0.75 then fg = M.c.peach end
+  return { text = (" cpu %s %.2f "):format(spark, one), fg = fg, bg = M.c.surface }
 end
 
 -- RAM USAGE — % used
@@ -390,9 +447,12 @@ function M.modules.ram()
   end)
   if s == "" then return { text = "" } end
   local pct = tonumber(s) or 0
+  -- Fixed 0..100 scale: 99% → ▇, 50% → ▄, 12% → ▁, never all `█` from
+  -- buffer-relative normalization on a steady metric.
+  local spark = M.spark("ram", pct, 6, 100)
   local fg = M.c.text
   if pct > 90 then fg = M.c.red elseif pct > 75 then fg = M.c.peach end
-  return { text = (" ram %d%% "):format(pct), fg = fg, bg = M.c.surface }
+  return { text = (" ram %s %d%% "):format(spark, pct), fg = fg, bg = M.c.surface }
 end
 
 -- CLOUD ACCOUNT — gcloud / aws (whichever is set)
@@ -573,11 +633,19 @@ function M.modules.save_pulse()
     M._save_pulse = nil
     return { text = "" }
   end
-  -- Two-phase visual: full bright green for first 60% of window, then dim
-  -- for the last 40% as a subtle fade-out — eye reads the transition.
+  -- Three-phase fade: green (full) → teal (mid) → sapphire (dim). On error,
+  -- stays red the whole window so the eye locks onto the failure. The eye
+  -- reads the color shift as a smooth fade even though it's discrete steps.
   local total = PULSE_MS
-  local phase_bright = remaining > (total * 0.4)
-  local bg = p.ok and (phase_bright and M.c.green or M.c.teal) or M.c.red
+  local pct_remaining = remaining / total
+  local bg
+  if p.ok then
+    if pct_remaining > 0.66 then bg = M.c.green
+    elseif pct_remaining > 0.33 then bg = M.c.teal
+    else bg = M.c.sapphire end
+  else
+    bg = M.c.red
+  end
   local icon = p.ok and "✓" or "✗"
   local name = p.name
   if #name > 22 then name = name:sub(1, 20) .. "…" end
@@ -672,11 +740,20 @@ local function _fmt_count(n)
   return string.format("%dk", math.floor(n / 1000))              -- 10k, 47k, 234k
 end
 
+-- Daily keystroke target. Drives the ●●●○○ progress dots in the engage chip.
+-- Anything reasonable; 5k is roughly a sustained writing day.
+local ENGAGE_DAILY_GOAL = 5000
+
 function M.modules.engage()
   if not M._engage.session_start_ms then return { text = "" } end
   local mins = math.floor((vim.uv.now() - M._engage.session_start_ms) / 60000)
-  return { text = (" ⌨ %s · %dm "):format(_fmt_count(M._engage.keys_today), mins),
-           fg = M.c.text, bg = M.c.surface }
+  local filled = math.floor(M._engage.keys_today / ENGAGE_DAILY_GOAL * 5 + 0.001)
+  local dots = M.dots(filled, 5)
+  -- Color the chip mauve once you've hit the goal; otherwise stays neutral.
+  local bg, fg = M.c.surface, M.c.text
+  if filled >= 5 then bg, fg = M.c.mauve, M.c.base end
+  return { text = (" ⌨ %s %s · %dm "):format(_fmt_count(M._engage.keys_today), dots, mins),
+           fg = fg, bg = bg }
 end
 
 -- Streak chip — consecutive days used. Hidden at streak ≤ 1 (no gloating on
@@ -758,6 +835,99 @@ function M.modules.playbook_led()
   if #name > 20 then name = name:sub(1, 18) .. "…" end
   return { text = (" %s %s · %s "):format(icon, name, fmt_age(age)),
            fg = M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── OVERSEER TASKS ───────────────────────────────────────────────────────
+-- Running task count from overseer, color-coded. Hidden when no tasks run.
+-- Click → opens the Dock's Tasks tab.
+function M.modules.tasks()
+  local ok, overseer = pcall(require, "overseer"); if not ok then return { text = "" } end
+  local statuses_ok, statuses = pcall(function() return require("overseer.constants").STATUS end)
+  local running = 0
+  local failed  = 0
+  for _, t in ipairs(overseer.list_tasks({})) do
+    if statuses_ok and t.status == statuses.RUNNING then running = running + 1
+    elseif statuses_ok and t.status == statuses.FAILURE then failed = failed + 1 end
+  end
+  if running == 0 and failed == 0 then return { text = "" } end
+  local txt, bg
+  if running > 0 then
+    txt = (" %s %d task%s "):format(spin_frame(), running, running > 1 and "s" or "")
+    bg = M.c.sapphire
+  else
+    txt = (" ✗ %d failed "):format(failed)
+    bg = M.c.red
+  end
+  return { text = txt, fg = M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── CONTEXT CHIPS (todos / conflicts / dap) ──────────────────────────────
+-- All three cache per (buf, changedtick) so they cost ~one table lookup per
+-- redraw on unchanged buffers. They auto-hide when their count is zero or
+-- the context doesn't apply, so the chain stays tight when nothing's wrong.
+
+local _todo_cache, _conflict_cache = {}, {}
+
+local function _bufprep()
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.bo[buf].buftype ~= "" then return nil end
+  return buf, vim.api.nvim_buf_get_changedtick(buf)
+end
+
+-- TODO / FIXME / HACK / XXX in current buffer. Capped scan at 5000 lines so
+-- enormous generated files don't slow the redraw.
+function M.modules.todos()
+  local buf, tick = _bufprep(); if not buf then return { text = "" } end
+  local hit = _todo_cache[buf]
+  if not (hit and hit.tick == tick) then
+    local count = 0
+    local lc = math.min(vim.api.nvim_buf_line_count(buf), 5000)
+    for _, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, lc, false)) do
+      if l:find("TODO", 1, true) or l:find("FIXME", 1, true)
+         or l:find("HACK", 1, true) or l:find("XXX", 1, true) then
+        count = count + 1
+      end
+    end
+    hit = { tick = tick, count = count }; _todo_cache[buf] = hit
+  end
+  if hit.count == 0 then return { text = "" } end
+  return { text = (" ✎ %d "):format(hit.count), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
+end
+
+-- Unresolved merge-conflict markers in current buffer. Promoted to red bg
+-- because this is exactly the "OH" moment — you don't want to commit yet.
+function M.modules.conflicts()
+  local buf, tick = _bufprep(); if not buf then return { text = "" } end
+  local hit = _conflict_cache[buf]
+  if not (hit and hit.tick == tick) then
+    local count = 0
+    for _, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+      if l:sub(1, 7) == "<<<<<<<" then count = count + 1 end
+    end
+    hit = { tick = tick, count = count }; _conflict_cache[buf] = hit
+  end
+  if hit.count == 0 then return { text = "" } end
+  return { text = (" ⚠ %d conflict%s "):format(hit.count, hit.count > 1 and "s" or ""),
+           fg = M.c.base, bg = M.c.red, gui = "bold" }
+end
+
+-- DAP session state — only present when a debug session is active.
+-- Stopped → mauve+icon highlight; running → teal; everything else hidden.
+function M.modules.dap_state()
+  local ok, dap = pcall(require, "dap"); if not ok then return { text = "" } end
+  local session = dap.session and dap.session(); if not session then return { text = "" } end
+  local status = session.stopped_thread_id and "stopped" or "running"
+  if status == "stopped" then
+    return { text = " 󰃤 paused ", fg = M.c.base, bg = M.c.mauve, gui = "bold" }
+  else
+    return { text = (" 󰃤 %s debug "):format(spin_frame()), fg = M.c.base, bg = M.c.teal, gui = "bold" }
+  end
+end
+
+-- Drop cached entries when the buffer is wiped so the tables don't leak.
+local function _flush_buf_cache(args)
+  _todo_cache[args.buf] = nil
+  _conflict_cache[args.buf] = nil
 end
 
 -- ─── JIRA TICKET CHIP ─────────────────────────────────────────────────────
@@ -887,8 +1057,45 @@ local function sep_hl(prev_bg, next_bg)
 end
 
 -- chain {...segments} -> "%#hlA# text %#sepAB# %#hlB# text %*"
+-- ─── click dispatcher ─────────────────────────────────────────────────────
+-- A statusline segment can include `on_click = function(button, mods) ... end`.
+-- chain() wraps that segment in vim's `%@FuncName@text%X` click escape, so
+-- the cell becomes clickable. `M.on_click(id)` looks the function up and
+-- invokes it.
+--
+-- Implementation note: the %@ escape only fires the dispatcher with no args
+-- (the function name is fixed: `v:lua.require'user.starship'.on_click`). We
+-- bridge by stashing the id in the URL slot. The id comes from a per-render
+-- table flushed before each rebuild so it never grows.
+M._click_handlers = {}
+local _next_click_id = 0
+
+-- Vim invokes %@v:lua.NAME@text%X with (minwid, clicks, button, mods).
+-- We stash the handler id in minwid and look it up here. Exposed as a
+-- bare global so the %@ escape can resolve it without a `require()` parse.
+function M.on_click(id, clicks, button, mods)
+  local fn = M._click_handlers[id]
+  if fn then pcall(fn, button or "l", mods or "", clicks or 1) end
+end
+_G._user_starship_on_click = M.on_click
+
+local function register_click(fn)
+  _next_click_id = _next_click_id + 1
+  local id = _next_click_id
+  M._click_handlers[id] = fn
+  return id
+end
+
+local function reset_clicks()
+  M._click_handlers = {}
+  _next_click_id = 0
+end
+
 function M.chain(segments, opts)
   opts = opts or {}
+  -- Reset per-render so old handler tables don't accumulate. Both halves of
+  -- the line are rebuilt every redraw, so flushing on left() entry covers both.
+  if opts.side == "left" then reset_clicks() end
   local sep_l = opts.sep_l or ""    -- powerline left   (filled wedge)
   local sep_r = opts.sep_r or ""    -- powerline right  (filled wedge)
   local side = opts.side or "left"
@@ -902,6 +1109,13 @@ function M.chain(segments, opts)
       -- malformed statusline format directive ("% " → E539). Our `%#hl#`
       -- markers are added BY this function, after escaping, so they survive.
       local safe_text = (seg.text:gsub("%%", "%%%%"))
+      -- Wrap the colored text in a click region when the segment ships one.
+      -- The `id` round-trips: `%<id>@func@text%X` calls `func(id, ...)`.
+      if seg.on_click then
+        local id = register_click(seg.on_click)
+        safe_text = string.format("%%%d@v:lua._user_starship_on_click@%s%%X",
+          id, safe_text)
+      end
       if side == "left" then
         if prev_bg then
           table.insert(out, "%#" .. sep_hl(prev_bg, seg.bg) .. "#" .. sep_l)
@@ -928,51 +1142,105 @@ end
 -- Anchor with the per-mode capsule so the whole left half flows from the
 -- mode color outward. Macro/search/diag/lsp/spinner appear conditionally —
 -- the chain skips empty segments so the visual rhythm stays tight.
+--
+-- Adaptive layout: `pri(min_cols, module_fn)` returns an empty segment
+-- (skipping the actual module call) when the terminal is narrower than
+-- `min_cols`. So peripheral chips vanish on small windows but urgent ones
+-- (mode, conflicts, save_pulse, diag, dap_state) always render.
+local function pri(min_cols, fn)
+  if vim.o.columns < min_cols then return { text = "" } end
+  return fn()
+end
+
+-- Attach a click handler to a segment. Skips when segment is empty (the
+-- chain ignores empty segments anyway, so attaching would just register
+-- dead ids). The handler receives (button, mods, clicks).
+local function clk(seg, fn)
+  if seg and seg.text and seg.text ~= "" then seg.on_click = fn end
+  return seg
+end
+
+-- ─── click handlers (closures over the relevant API) ──────────────────────
+-- Defined once, reused across renders. pcall'd so a missing plugin doesn't
+-- explode the statusline (it does silently swallow the click — the chip is
+-- still visible, just inert).
+local function cmd(c)            return function() pcall(vim.cmd, c) end end
+local function lua(fn)           return function() pcall(fn) end end
+local function first_of(...)
+  -- Run the first command that exists. Lets us try :LazyGit then :Neogit
+  -- without depending on either being present.
+  local cands = { ... }
+  return function()
+    for _, c in ipairs(cands) do
+      if vim.fn.exists(":" .. (c:match("^(%w+)") or "")) > 0 then
+        pcall(vim.cmd, c); return
+      end
+    end
+  end
+end
+local function jump_first_conflict()
+  local buf = vim.api.nvim_get_current_buf()
+  for i, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    if l:sub(1, 7) == "<<<<<<<" then
+      vim.api.nvim_win_set_cursor(0, { i, 0 })
+      vim.cmd("normal! zz")
+      return
+    end
+  end
+end
+local function show_battery_detail()
+  local out = vim.fn.system("pmset -g batt 2>/dev/null")
+  vim.notify(out, vim.log.levels.INFO, { title = "battery" })
+end
+
 function M.left()
   return M.chain({
-    M.modules.mode(),          -- per-mode capsule (replaces lualine_a "mode")
-    M.modules.macro(),         -- pulsing "REC @q" while recording
-    M.modules.search(),        -- "[n/total]" during /-search
-    M.modules.os(),
-    M.modules.user_short(),
-    M.modules.ssh(),           -- only if remote
-    M.modules.dir(),
-    M.modules.project_type(),  -- only if recognizable
-    M.modules.package_version(),
-    M.modules.git(),
-    M.modules.gitdiff(),
-    M.modules.diag(),          -- buffer diagnostics (severity-colored bg)
-    M.modules.lsp(),           -- connected LSP clients
-    M.modules.spinner(),       -- animated when user.jobs has running tasks
-    M.modules.save_pulse(),    -- "✓ saved · file" chip for 1.6s after BufWritePost
-    M.modules.jira(),          -- branch's Jira ticket + status (cache-only)
-    M.modules.playbook_led(),  -- last fired playbook (fades after 10 min)
-    M.modules.update(),        -- "↓N" if behind upstream
-    M.modules.direnv(),        -- only if .envrc loaded
+    M.modules.mode(),
+    M.modules.macro(),
+    M.modules.search(),
+    clk(M.modules.conflicts(),              jump_first_conflict),
+    pri(110, M.modules.os),
+    pri(100, M.modules.user_short),
+    M.modules.ssh(),
+    clk(pri( 80, M.modules.dir),            lua(function() require("user.spotlight").open() end)),
+    pri(130, M.modules.project_type),
+    pri(140, M.modules.package_version),
+    clk(pri(100, M.modules.git),            first_of("LazyGit", "Neogit")),
+    clk(pri(120, M.modules.gitdiff),        cmd("Gitsigns preview_hunk")),
+    clk(M.modules.diag(),                   first_of("Trouble diagnostics toggle", "TroubleToggle", "Telescope diagnostics")),
+    clk(pri(120, M.modules.lsp),            cmd("Mason")),
+    clk(M.modules.spinner(),                lua(function() require("user.jobs").list() end)),
+    clk(M.modules.tasks(),                  lua(function() require("user.dock").open("tasks") end)),
+    M.modules.save_pulse(),
+    clk(pri(110, M.modules.jira),           lua(function() require("user.jira").show_issue() end)),
+    clk(pri(140, M.modules.todos),          first_of("TodoTrouble", "TodoTelescope")),
+    clk(M.modules.dap_state(),              first_of("DapContinue")),
+    clk(pri(140, M.modules.playbook_led),   lua(function() require("user.playbooks").show() end)),
+    clk(pri(120, M.modules.update),         cmd("Git fetch")),
+    pri(140, M.modules.direnv),
   }, { side = "left" })
 end
 
 function M.right()
   return M.chain({
-    M.modules.heartbeat(),     -- once-a-minute 200ms ♥/♡ pulse
-    M.modules.engage(),        -- "⌨ 2.4k · 47m" — keys today + session minutes
-    M.modules.streak(),        -- "🔥 14d" — consecutive days (hidden ≤ 1)
-    M.modules.cmd_duration(),  -- "took 2.4s" after slow cmds
-    M.modules.ai(),
-    M.modules.pomo(),
-    -- per-language version (only one renders at a time)
-    M.modules.python(),
-    M.modules.node(),
-    M.modules.go(),
-    M.modules.rust(),
-    M.modules.terraform(),
-    M.modules.docker(),
-    M.modules.k8s(),
-    M.modules.cloud(),
-    M.modules.cpu(),
-    M.modules.ram(),
-    M.modules.battery(),
-    M.modules.time(),
+    pri(110, M.modules.heartbeat),
+    clk(pri(120, M.modules.engage),         lua(function() require("user.state").show() end)),
+    clk(pri(110, M.modules.streak),         lua(function() require("user.today").show() end)),
+    pri(120, M.modules.cmd_duration),
+    clk(pri(140, M.modules.ai),             cmd("AI")),
+    clk(pri(140, M.modules.pomo),           first_of("TimerStop", "TimerSession")),
+    pri(150, M.modules.python),
+    pri(150, M.modules.node),
+    pri(150, M.modules.go),
+    pri(150, M.modules.rust),
+    pri(160, M.modules.terraform),
+    pri(160, M.modules.docker),
+    pri(160, M.modules.k8s),
+    pri(150, M.modules.cloud),
+    clk(pri(130, M.modules.cpu),            cmd("PerfHud")),
+    clk(pri(130, M.modules.ram),            cmd("PerfHud")),
+    clk(pri(120, M.modules.battery),        show_battery_detail),
+    clk(M.modules.time(),                   cmd("Today")),
   }, { side = "right" })
 end
 
@@ -982,6 +1250,12 @@ function M.setup()
   M._hook_save_pulse()
   M._hook_engagement()
   M._hook_diag_chips()
+  -- per-buf chip caches: free entries when their buffer goes away so we
+  -- don't accumulate state across long sessions.
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = vim.api.nvim_create_augroup("user_starship_chip_cache", { clear = true }),
+    callback = _flush_buf_cache,
+  })
 end
 
 return M

@@ -58,6 +58,9 @@ opt.timeoutlen = 400
 
 opt.clipboard = "unnamedplus"
 opt.mouse = "a"
+opt.mousemodel = "popup_setpos"   -- right-click positions cursor + opens PopUp menu
+opt.mousescroll = "ver:3,hor:6"   -- vertical 3 lines / horizontal 6 cols per wheel notch
+opt.smoothscroll = true           -- ctrl-d / ctrl-u feel smoother on wrapped lines
 opt.confirm = true
 opt.completeopt = "menu,menuone,noselect"
 

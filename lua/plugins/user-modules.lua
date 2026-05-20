@@ -46,6 +46,11 @@ return {
       require("user.macroreg").setup()
       require("user.jira").setup()
       require("user.confluence").setup()
+      require("user.contextmenu").setup()
+      require("user.tabs").setup()
+      require("user.windows").setup()
+      require("user.dock").setup()
+      require("user.projects").setup()
 
       -- ─── cockpit / mission control ───
       require("user.compass").setup()
@@ -157,6 +162,29 @@ return {
       { "<leader>CR", function() require("user.confluence").show_recent_edits() end, desc = "Confluence: recently modified (wiki)" },
       { "<leader>CI", function() require("user.confluence").insert_ref("recent") end, desc = "Confluence: insert page ref (recent)" },
       { "<leader>CS", function() require("user.confluence").insert_ref("search") end, desc = "Confluence: insert page ref (search)" },
+
+      -- ═════ WINDOWS / TABS ═════
+      { "<leader>ww", function() require("user.windows").pick() end,            desc = "Windows: pick" },
+      { "<leader>wz", function() require("user.windows").toggle_maximize() end, desc = "Windows: maximize/zen toggle" },
+      { "<leader>wm", function() require("user.windows").toggle_maximize() end, desc = "Windows: maximize toggle (alias)" },
+      { "<leader>wS", function() require("user.windows").save_layout() end,     desc = "Windows: save layout" },
+      { "<leader>wL", function() require("user.windows").show_layouts() end,    desc = "Windows: load layout (pick)" },
+      { "<leader>wD", function() require("user.windows").delete_layout() end,   desc = "Windows: delete layout (pick)" },
+      { "<leader><tab>r", "<cmd>TabRename<CR>",     desc = "Tab: rename" },
+      { "<leader><tab>a", "<cmd>TabRenameAuto<CR>", desc = "Tab: revert to auto-name" },
+
+      -- ═════ DOCK ═════
+      { "<leader>`",  function() require("user.dock").toggle() end,         desc = "Dock: toggle", mode = { "n", "t" } },
+      { "<leader>1`", function() require("user.dock").switch(1) end,        desc = "Dock: term 1" },
+      { "<leader>2`", function() require("user.dock").switch(2) end,        desc = "Dock: term 2" },
+      { "<leader>3`", function() require("user.dock").switch(3) end,        desc = "Dock: term 3" },
+      { "<leader>4`", function() require("user.dock").switch(4) end,        desc = "Dock: output" },
+      { "<leader>5`", function() require("user.dock").switch(5) end,        desc = "Dock: tasks" },
+      { "<leader>6`", function() require("user.dock").switch(6) end,        desc = "Dock: notifications" },
+
+      -- ═════ PROJECTS ═════
+      { "<leader>oo", function() require("user.projects").show() end,       desc = "Projects: pick" },
+      { "<leader>oP", function() require("user.projects").pin() end,        desc = "Projects: pin cwd" },
 
       -- ═════ COCKPIT (<leader>!) ═════
       { "<leader>!!", function() require("user.cockpit").toggle() end, desc = "Cockpit toggle" },

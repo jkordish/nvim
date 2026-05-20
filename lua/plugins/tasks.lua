@@ -10,8 +10,19 @@ return {
       "OverseerOpen", "OverseerClose", "OverseerToggle", "OverseerSaveBundle",
       "OverseerLoadBundle", "OverseerDeleteBundle", "OverseerRunCmd", "OverseerRun",
       "OverseerInfo", "OverseerBuild", "OverseerQuickAction", "OverseerTaskAction",
-      "OverseerClearCache",
+      "OverseerClearCache", "Task",
     },
+    init = function()
+      -- Shorthand: `:Task` (no args) opens the template picker; `:Task <name>`
+      -- runs that template directly. Stays loaded lazy via the `cmd` list.
+      vim.api.nvim_create_user_command("Task", function(a)
+        local ok, overseer = pcall(require, "overseer"); if not ok then return end
+        if a.args == "" then return vim.cmd("OverseerRun") end
+        overseer.run_template({ name = a.args }, function(_, err)
+          if err then vim.notify("task failed · " .. tostring(err), vim.log.levels.ERROR) end
+        end)
+      end, { nargs = "?", desc = "Run an overseer template by name (no args = pick)" })
+    end,
     keys = {
       { "<leader>Tt", "<cmd>OverseerToggle<CR>",      desc = "Tasks toggle" },
       { "<leader>Tr", "<cmd>OverseerRun<CR>",         desc = "Run task" },
