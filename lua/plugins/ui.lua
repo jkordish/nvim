@@ -190,13 +190,8 @@ return {
         color = { fg = colors.sapphire, gui = "bold" },
       }
 
-      -- user.warnings LED panel (MOD ERR JOB GIT NET indicators)
-      local user_warnings = {
-        function()
-          local ok, w = pcall(require, "user.warnings")
-          return ok and w.statusline() or ""
-        end,
-      }
+      -- (user.warnings LED panel removed in the cull; dropped from lualine
+      -- because it duplicated info already shown by diagnostics + jobs segments.)
 
       -- Pomodoro timer (epwalsh/pomo.nvim)
       local pomo_timer = {
@@ -329,24 +324,63 @@ return {
   {
     "folke/which-key.nvim",
     event = "VeryLazy",
-    opts = {
-      preset = "modern",
-      spec = {
-        { "<leader>b", group = "buffer" },
-        { "<leader>c", group = "code" },
-        { "<leader>f", group = "find/file" },
-        { "<leader>g", group = "git" },
-        { "<leader>l", group = "lsp" },
-        { "<leader>s", group = "search" },
-        { "<leader>t", group = "toggle/test" },
-        { "<leader>x", group = "diagnostics/quickfix" },
-        { "<leader>a", group = "ai" },
-        { "<leader><tab>", group = "tab" },
-      },
-    },
+    opts = function()
+      -- Lazy-load the filter so user.commandeer is available
+      local ok, commandeer = pcall(require, "user.commandeer")
+      local filter = ok and commandeer.filter or nil
+      return {
+        preset = "modern",
+        filter = filter,
+        delay = 350,                     -- snappier than default 1000ms
+        notify = false,                  -- silence which-key's own notifications
+        sort = { "alphanum", "manual", "local", "order", "group", "mod", "lower", "icase" },
+        win = {
+          border = "rounded",
+          padding = { 1, 2 },
+          title = "  ◆  what's available  ",
+          title_pos = "left",
+          wo = { winblend = 0 },
+        },
+        layout = { width = { min = 22 }, spacing = 4 },
+        keys = { scroll_down = "<c-d>", scroll_up = "<c-u>" },
+        -- Group labels — only kept ones still actively used after the cull
+        spec = {
+          { "<leader>!", group = "cockpit" },
+          { "<leader>c", group = "code" },
+          { "<leader>g", group = "git" },
+          { "<leader>r", group = "REPL" },
+          { "<leader>s", group = "search" },
+          { "<leader>f", group = "find" },
+          { "<leader>t", group = "toggle / test" },
+          { "<leader>d", group = "debug" },
+          { "<leader>u", group = "utility" },
+          { "<leader>W", group = "workspace" },
+          { "<leader>T", group = "tasks" },
+          { "<leader>O", group = "GitHub (octo)" },
+          { "<leader>q", group = "quit / macros" },
+        },
+        -- Style hooks tying back to the brand palette
+        icons = {
+          breadcrumb = "▸",
+          separator  = "·",
+          group      = "◆ ",
+        },
+      }
+    end,
     keys = {
-      { "<leader>?", function() require("which-key").show({ global = false }) end, desc = "Buffer keymaps" },
+      -- Bare <leader>? = show ALL bindings (escape from the context filter)
+      { "<leader>?", function() require("user.commandeer").show_all() end, desc = "All bindings (escape filter)" },
     },
+    config = function(_, opts)
+      require("which-key").setup(opts)
+      -- Paint which-key with the brand palette
+      vim.api.nvim_set_hl(0, "WhichKey",          { fg = "#cba6f7", bold = true })   -- the key itself
+      vim.api.nvim_set_hl(0, "WhichKeyDesc",      { fg = "#cdd6f4" })                -- description
+      vim.api.nvim_set_hl(0, "WhichKeyGroup",     { fg = "#7287fd", italic = true }) -- group label
+      vim.api.nvim_set_hl(0, "WhichKeySeparator", { fg = "#45475a" })                -- · between cols
+      vim.api.nvim_set_hl(0, "WhichKeyTitle",    { fg = "#cba6f7", bold = true })
+      vim.api.nvim_set_hl(0, "WhichKeyBorder",   { fg = "#cba6f7" })
+    end,
   },
 
   -- alpha-nvim replaced by snacks.dashboard (configured in extras.lua) — more

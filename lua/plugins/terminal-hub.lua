@@ -51,31 +51,8 @@ return {
     end,
   },
 
-  -- ─────────────────────────────────────────────────────────────────────
-  -- fzf-lua — alternative blazing fast picker. Use alongside Telescope;
-  -- fzf-lua wins for huge codebases and live grep with regex.
-  -- ─────────────────────────────────────────────────────────────────────
-  {
-    "ibhagwan/fzf-lua",
-    cmd = "FzfLua",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
-    keys = {
-      { "<leader>zf", "<cmd>FzfLua files<CR>",         desc = "fzf files" },
-      { "<leader>zg", "<cmd>FzfLua live_grep<CR>",     desc = "fzf grep" },
-      { "<leader>zG", "<cmd>FzfLua live_grep_resume<CR>", desc = "fzf grep resume" },
-      { "<leader>zb", "<cmd>FzfLua buffers<CR>",       desc = "fzf buffers" },
-      { "<leader>zh", "<cmd>FzfLua help_tags<CR>",     desc = "fzf help" },
-      { "<leader>zr", "<cmd>FzfLua resume<CR>",        desc = "fzf resume" },
-      { "<leader>zs", "<cmd>FzfLua lsp_document_symbols<CR>", desc = "fzf doc symbols" },
-      { "<leader>zS", "<cmd>FzfLua lsp_live_workspace_symbols<CR>", desc = "fzf workspace symbols" },
-      { "<leader>zc", "<cmd>FzfLua commands<CR>",      desc = "fzf commands" },
-    },
-    opts = {
-      "fzf-native",
-      winopts = { border = "rounded", preview = { border = "rounded" } },
-      grep = { rg_opts = "--column --line-number --no-heading --color=always --smart-case --hidden -g '!.git'" },
-    },
-  },
+  -- fzf-lua REMOVED — Telescope (with telescope-fzf-native) is the single
+  -- picker. We never invoked fzf-lua post-keymap-cull anyway.
 
   -- ─────────────────────────────────────────────────────────────────────
   -- Dev Containers — open a project in its declared devcontainer.

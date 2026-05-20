@@ -52,13 +52,9 @@ return {
     opts = {},
   },
 
-  {
-    "tpope/vim-fugitive",
-    cmd = { "Git", "G", "Gdiffsplit", "Gread", "Gwrite", "GBrowse" },
-    keys = {
-      { "<leader>gg", "<cmd>Git<CR>", desc = "Fugitive" },
-    },
-  },
+  -- fugitive REMOVED — Neogit (lua/plugins/git-advanced.lua) covers the same
+  -- workflow with a cleaner UI. Use :Neogit instead of :Git. For diff views,
+  -- use :DiffviewOpen.
 
   {
     "akinsho/toggleterm.nvim",

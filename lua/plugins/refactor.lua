@@ -108,23 +108,6 @@ return {
     },
   },
 
-  -- ─────────────────────────────────────────────────────────────────────
-  -- Show usage count above functions/symbols inline.
-  -- ─────────────────────────────────────────────────────────────────────
-  {
-    "Wansmer/symbol-usage.nvim",
-    event = "LspAttach",
-    opts = {
-      vt_position = "end_of_line",
-      references = { enabled = true, include_declaration = false },
-      definition = { enabled = false },
-      implementation = { enabled = true },
-      kinds = {
-        vim.lsp.protocol.SymbolKind.Function,
-        vim.lsp.protocol.SymbolKind.Method,
-        vim.lsp.protocol.SymbolKind.Class,
-        vim.lsp.protocol.SymbolKind.Interface,
-      },
-    },
-  },
+  -- symbol-usage.nvim REMOVED — spammy virtual text every line; LSP `gr` /
+  -- Glance `gpr` give the same info on demand without the visual noise.
 }

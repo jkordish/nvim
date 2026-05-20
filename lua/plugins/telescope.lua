@@ -10,7 +10,8 @@ return {
       "nvim-telescope/telescope-file-browser.nvim",
     },
     keys = {
-      { "<leader><space>", function() require("telescope.builtin").find_files() end, desc = "Find files" },
+      -- <leader><space> is now the Suggest contextual launcher (user.suggest)
+      -- <leader>ff is the explicit find-files binding (kept below)
       { "<leader>ff", function() require("telescope.builtin").find_files() end, desc = "Find files" },
       { "<leader>fg", function() require("telescope.builtin").git_files() end, desc = "Git files" },
       { "<leader>fr", function() require("telescope.builtin").oldfiles() end, desc = "Recent files" },

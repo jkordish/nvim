@@ -6,11 +6,11 @@ return {
   -- ─────────────────────────────────────────────────────────────────────
   {
     "mikavilpas/yazi.nvim",
-    event = "VeryLazy",
+    -- <leader>fy/<leader>fY removed in the cull. Yazi is still accessible via
+    -- `:Yazi` / `:Yazi cwd`. The single primary file picker is Telescope.
+    cmd = "Yazi",
     keys = {
-      { "<leader>fy",  "<cmd>Yazi<CR>",            desc = "Yazi (file at cursor)" },
-      { "<leader>fY",  "<cmd>Yazi cwd<CR>",        desc = "Yazi (cwd)" },
-      { "<C-y>",       "<cmd>Yazi toggle<CR>",     desc = "Yazi resume" },
+      { "<C-y>", "<cmd>Yazi toggle<CR>", desc = "Yazi resume" },
     },
     opts = {
       open_for_directories = false,

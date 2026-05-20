@@ -1,50 +1,10 @@
 return {
-  -- ─────────────────────────────────────────────────────────────────────
-  -- Matrix rain + other animations made from your own code.
-  -- :CellularAutomaton make_it_rain  |  game_of_life
-  -- ─────────────────────────────────────────────────────────────────────
-  {
-    "eandrju/cellular-automaton.nvim",
-    cmd = "CellularAutomaton",
-    keys = {
-      { "<leader>Xr", "<cmd>CellularAutomaton make_it_rain<CR>", desc = "Make it rain 🌧" },
-      { "<leader>Xg", "<cmd>CellularAutomaton game_of_life<CR>", desc = "Game of life" },
-      { "<leader>Xs", "<cmd>CellularAutomaton scramble<CR>",     desc = "Scramble code" },
-    },
-  },
-
-  -- ─────────────────────────────────────────────────────────────────────
-  -- Minimap on the right.
-  -- ─────────────────────────────────────────────────────────────────────
-  {
-    "echasnovski/mini.map",
-    event = "VeryLazy",
-    keys = {
-      { "<leader>tm", function() require("mini.map").toggle() end, desc = "Toggle minimap" },
-      { "<leader>tM", function() require("mini.map").toggle_focus() end, desc = "Focus minimap" },
-    },
-    config = function()
-      local map = require("mini.map")
-      map.setup({
-        integrations = {
-          map.gen_integration.builtin_search(),
-          map.gen_integration.diff(),
-          map.gen_integration.diagnostic({
-            error = "DiagnosticFloatingError",
-            warn  = "DiagnosticFloatingWarn",
-            info  = "DiagnosticFloatingInfo",
-            hint  = "DiagnosticFloatingHint",
-          }),
-        },
-        symbols = {
-          encode = map.gen_encode_symbols.dot("3x2"),
-          scroll_line = "█",
-          scroll_view = "┃",
-        },
-        window = { side = "right", width = 10, winblend = 25, show_integration_count = false },
-      })
-    end,
-  },
+  -- cellular-automaton REMOVED — `user.matrix` (lua/user/_play/matrix.lua)
+  -- and `user.aurora` cover the same novelty surface using extmarks only,
+  -- no external plugin.
+  --
+  -- mini.map REMOVED — visual real estate cost > value. Snacks.scope already
+  -- shows scope edges in the gutter; aerial/symtree show outline on demand.
 
   -- ─────────────────────────────────────────────────────────────────────
   -- Auto-save (silent) — saves on focus loss / leave insert if file has name.

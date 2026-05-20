@@ -1,29 +1,8 @@
+-- vim-pencil + vim-wordy REMOVED — niche prose tools we never reached for.
+-- ltex-ls (LanguageTool grammar) covers the practical need; for soft-wrap
+-- in markdown the FileType autocmd in core/autocmds.lua already sets wrap.
 return {
-  -- ─────────────────────────────────────────────────────────────────────
-  -- vim-pencil — wraps prose pleasantly: hard wrap or soft wrap, smart j/k.
-  -- Auto-toggles on markdown/text/gitcommit.
-  -- ─────────────────────────────────────────────────────────────────────
-  {
-    "preservim/vim-pencil",
-    ft = { "markdown", "text", "gitcommit" },
-    init = function()
-      vim.g["pencil#wrapModeDefault"] = "soft"
-      vim.g["pencil#textwidth"] = 80
-      vim.g["pencil#autoformat"] = 0
-      vim.api.nvim_create_autocmd("FileType", {
-        group = vim.api.nvim_create_augroup("user_pencil", { clear = true }),
-        pattern = { "markdown", "text", "gitcommit" },
-        callback = function() vim.fn["pencil#init"]() end,
-      })
-    end,
-    keys = {
-      { "<leader>tP", function() vim.fn["pencil#toggle"]() end, desc = "Toggle pencil prose mode" },
-    },
-  },
-
-  -- ─────────────────────────────────────────────────────────────────────
   -- LanguageTool grammar checker via ltex-ls (installed by Mason).
-  -- ─────────────────────────────────────────────────────────────────────
   {
     "barreiroleo/ltex_extra.nvim",
     ft = { "markdown", "tex", "text", "gitcommit" },
@@ -60,16 +39,5 @@ return {
         end,
       })
     end,
-  },
-
-  -- Word count / readability for markdown/text.
-  {
-    "preservim/vim-wordy",
-    ft = { "markdown", "text" },
-    cmd = { "Wordy", "NoWordy", "PrevWordy", "NextWordy" },
-    keys = {
-      { "<leader>tw", "<cmd>Wordy weak<CR>",  desc = "Wordy: weak words" },
-      { "<leader>tW", "<cmd>NoWordy<CR>",     desc = "Wordy off" },
-    },
   },
 }

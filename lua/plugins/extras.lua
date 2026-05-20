@@ -207,22 +207,8 @@ return {
     },
   },
 
-  -- ASCII screenshots of selected code (great for blog posts / Slack).
-  {
-    "mistricky/codesnap.nvim",
-    build = "make",
-    cmd = { "CodeSnap", "CodeSnapSave", "CodeSnapHighlight", "CodeSnapASCII" },
-    keys = {
-      { "<leader>cy", "<cmd>CodeSnap<CR>", mode = "x", desc = "Snap to clipboard" },
-      { "<leader>cY", "<cmd>CodeSnapSave<CR>", mode = "x", desc = "Snap to file" },
-    },
-    opts = {
-      save_path = "~/Pictures/codesnap",
-      has_breadcrumbs = true,
-      bg_theme = "bamboo",
-      watermark = "",
-    },
-  },
+  -- codesnap REMOVED — used twice in 6 months. macOS screenshot tools and
+  -- carbon.now.sh cover the same need without a rust build dependency.
 
   -- Treesitter rainbow delimiters — match nested braces by color.
   {
