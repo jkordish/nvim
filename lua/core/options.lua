@@ -90,6 +90,7 @@ do
     "vim.lsp.buf_get_clients",
     "vim.lsp.get_buffers_by_client_id",
     "vim.lsp.set_log_level",
+    "vim.lsp.codelens.refresh",  -- belt-and-suspenders for upstream plugins
   }
   ---@diagnostic disable-next-line: duplicate-set-field
   vim.deprecate = function(name, alternative, version, plugin, backtrace)

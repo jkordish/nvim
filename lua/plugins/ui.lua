@@ -160,6 +160,15 @@ return {
         color = { fg = colors.green },
       }
 
+      -- user.jobs background queue indicator
+      local user_jobs = {
+        function()
+          local ok, jobs = pcall(require, "user.jobs")
+          return ok and jobs.statusline() or ""
+        end,
+        color = { fg = colors.sapphire, gui = "bold" },
+      }
+
       -- Pomodoro timer (epwalsh/pomo.nvim)
       local pomo_timer = {
         function()
@@ -228,6 +237,7 @@ return {
             { function() local ok, n = pcall(require, "noice"); return ok and n.api.status.command.has() and n.api.status.command.get() or "" end },
           },
           lualine_x = {
+            user_jobs,
             pomo_timer,
             overseer_tasks,
             autoformat,

@@ -123,14 +123,11 @@ return {
           })
         end
 
-        -- CodeLens: refresh on read/cursor-hold, render run/debug buttons inline
+        -- CodeLens: nvim 0.12+ has built-in auto-refresh via codelens.enable.
+        -- No autocmds needed — the LSP client refreshes on relevant events.
         if client:supports_method("textDocument/codeLens") then
           nmap("<leader>cl", vim.lsp.codelens.run, "Run codelens action")
-          nmap("<leader>cL", vim.lsp.codelens.refresh, "Refresh codelens")
-          local grp = vim.api.nvim_create_augroup("user_lsp_codelens_" .. bufnr, { clear = true })
-          vim.api.nvim_create_autocmd({ "BufEnter", "CursorHold", "InsertLeave" }, {
-            group = grp, buffer = bufnr, callback = function() vim.lsp.codelens.refresh({ bufnr = bufnr }) end,
-          })
+          pcall(vim.lsp.codelens.enable, true, { bufnr = bufnr })
         end
       end
 

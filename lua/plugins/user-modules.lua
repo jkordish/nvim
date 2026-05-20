@@ -14,6 +14,12 @@ return {
       require("user.workspace").setup()
       require("user.repl").setup()
       require("user.coverage").setup()
+      require("user.jobs").setup()
+      require("user.heatmap").setup()
+      require("user.pulse").setup()
+      require("user.webhook").setup()
+      require("user.symtree").setup()
+      require("user.today").setup()
     end,
     keys = {
       -- Yank ring (normal mode only — visual <leader>p is paste-without-yank)
@@ -37,6 +43,17 @@ return {
       -- Coverage
       { "<leader>uc", function() require("user.coverage").show() end, desc = "Coverage: show signs" },
       { "<leader>uC", function() require("user.coverage").hide() end, desc = "Coverage: hide signs" },
+      -- Jobs
+      { "<leader>uj", function() require("user.jobs").list() end, desc = "Jobs: list" },
+      -- Heatmap
+      { "<leader>uh", function() require("user.heatmap").toggle() end, desc = "Heatmap: toggle git churn" },
+      -- Symbol tree
+      { "<leader>uo", function() require("user.symtree").toggle() end, desc = "SymTree: toggle outline" },
+      -- Today
+      { "<leader>ut", function() require("user.today").show() end, desc = "Today: activity dashboard" },
+      -- Webhook
+      { "<leader>uw", function() vim.cmd("WebhookStart") end, desc = "Webhook: start server" },
+      { "<leader>uW", function() vim.cmd("WebhookStop") end, desc = "Webhook: stop server" },
     },
   },
 }
