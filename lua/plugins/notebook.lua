@@ -1,12 +1,15 @@
+-- Notebook stack is opt-in: only activates when jupyter_client + pynvim
+-- python modules are importable. Install via:
+--   pip install --user pynvim jupyter_client cairosvg pnglatex plotly kaleido pyperclip nbformat
+-- then restart nvim. Until then these plugins stay dormant — no errors.
+local has_jupyter = vim.fn.executable("python3") == 1
+  and vim.fn.system("python3 -c 'import jupyter_client' 2>/dev/null; echo $?"):match("^0") ~= nil
+
 return {
-  -- ─────────────────────────────────────────────────────────────────────
-  -- Quarto — VSCode-style notebook UX in nvim. Run cells, display outputs
-  -- inline (with image.nvim already in your stack). Also handles plain
-  -- Jupyter via jupytext sync.
-  -- ─────────────────────────────────────────────────────────────────────
   {
     "quarto-dev/quarto-nvim",
-    ft = { "quarto", "markdown" },
+    cond = has_jupyter,
+    ft = { "quarto" },
     dependencies = {
       "jmbuhr/otter.nvim",
       "nvim-treesitter/nvim-treesitter",
@@ -41,9 +44,10 @@ return {
   -- ─────────────────────────────────────────────────────────────────────
   {
     "benlubas/molten-nvim",
+    cond = has_jupyter,
     version = "^1.0.0",
-    ft = { "python", "markdown", "quarto" },
-    dependencies = { "3rd/image.nvim" },
+    ft = { "quarto" },
+    dependencies = {},
     build = ":UpdateRemotePlugins",
     init = function()
       vim.g.molten_image_provider = "image.nvim"
@@ -69,6 +73,7 @@ return {
   -- Jupyter notebook (.ipynb) <-> .py sync via jupytext.
   {
     "GCBallesteros/jupytext.nvim",
+    cond = has_jupyter,
     ft = { "ipynb" },
     config = true,
     opts = {

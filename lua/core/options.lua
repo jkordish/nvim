@@ -66,3 +66,24 @@ vim.g.loaded_python_provider = 0
 vim.g.loaded_ruby_provider = 0
 vim.g.loaded_perl_provider = 0
 vim.g.loaded_node_provider = 0
+
+-- Silence deprecation warnings from upstream plugins (git-conflict, hydra,
+-- rustaceanvim) using removed nvim 0.12 APIs. They'll fix it; meanwhile we
+-- don't need the noise.
+do
+  local orig = vim.deprecate
+  ---@diagnostic disable-next-line: duplicate-set-field
+  vim.deprecate = function(name, alternative, version, plugin, backtrace)
+    local muted = {
+      ["vim.highlight"] = true,
+      ["vim.validate"] = true,
+      ["vim.lsp.buf_get_clients()"] = true,
+      ["vim.lsp.get_buffers_by_client_id()"] = true,
+    }
+    if muted[name] then return end
+    return orig(name, alternative, version, plugin, backtrace)
+  end
+end
+
+-- Cap LSP log size so it can't grow to a gigabyte again.
+vim.lsp.log.set_level("WARN")

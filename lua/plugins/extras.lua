@@ -23,9 +23,9 @@ return {
       terminal = { enabled = true },
       zen = { enabled = true, toggles = { dim = true, git_signs = false, mini_diff_signs = false } },
       dim = { enabled = true },
-      input = { enabled = true },
-      image = { enabled = true },
-      notifier = { enabled = false }, -- using nvim-notify
+      input = { enabled = false },     -- dressing.nvim handles vim.ui.input
+      image = { enabled = true },      -- snacks does PNG natively via Ghostty kitty protocol
+      notifier = { enabled = false },  -- using nvim-notify
       dashboard = { enabled = false }, -- using alpha-nvim
       picker = { enabled = false },    -- using telescope
     },

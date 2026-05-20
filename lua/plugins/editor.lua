@@ -141,6 +141,10 @@ return {
   {
     "MeanderingProgrammer/render-markdown.nvim",
     ft = { "markdown", "Avante", "copilot-chat" },
-    opts = { file_types = { "markdown", "Avante", "copilot-chat" } },
+    opts = {
+      file_types = { "markdown", "Avante", "copilot-chat" },
+      latex = { enabled = false },          -- no latex parser installed
+      checkbox = { enabled = true, position = "inline" },
+    },
   },
 }

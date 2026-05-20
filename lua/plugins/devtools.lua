@@ -97,27 +97,9 @@ return {
     },
   },
 
-  -- ─────────────────────────────────────────────────────────────────────
-  -- Project root detection + project picker.
-  -- ─────────────────────────────────────────────────────────────────────
-  {
-    "ahmedkhalf/project.nvim",
-    event = "VeryLazy",
-    main = "project_nvim",
-    opts = {
-      manual_mode = false,
-      detection_methods = { "lsp", "pattern" },
-      patterns = { ".git", "_darcs", ".hg", ".bzr", ".svn", "Makefile", "package.json", "go.mod", "Cargo.toml", "pyproject.toml" },
-      show_hidden = false,
-    },
-    keys = {
-      { "<leader>fp", function() require("telescope").extensions.projects.projects({}) end, desc = "Projects" },
-    },
-    config = function(_, opts)
-      require("project_nvim").setup(opts)
-      pcall(function() require("telescope").load_extension("projects") end)
-    end,
-  },
+  -- project.nvim removed: unmaintained, uses removed vim.lsp.buf_get_clients()
+  -- which was deleted in nvim 0.12. Use `<leader>fr` (recent files) or
+  -- `<leader>fg` (git files) for fast project-aware navigation.
 
   -- ─────────────────────────────────────────────────────────────────────
   -- Tmux/wezterm-aware splits.

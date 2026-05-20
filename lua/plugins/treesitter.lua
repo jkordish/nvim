@@ -15,7 +15,7 @@ return {
 
       local ensure = {
         "bash", "c", "cpp", "css", "diff", "dockerfile", "go", "gomod", "gosum",
-        "html", "javascript", "json", "jsonc", "lua", "luadoc", "luap",
+        "html", "javascript", "json", "lua", "luadoc", "luap",
         "markdown", "markdown_inline", "python", "query", "regex", "rust",
         "scss", "sql", "toml", "tsx", "typescript", "vim", "vimdoc", "yaml",
         "gitcommit", "gitignore", "git_config", "git_rebase",

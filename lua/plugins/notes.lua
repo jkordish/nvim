@@ -6,7 +6,18 @@ return {
   {
     "epwalsh/obsidian.nvim",
     version = "*",
-    ft = "markdown",
+    -- Load on VeryLazy (not ft=markdown) so setup() runs before
+    -- render-markdown queries the obsidian client. Auto-creates ~/notes.
+    event = "VeryLazy",
+    init = function()
+      local notes_dir = vim.fn.expand("~/notes")
+      if vim.fn.isdirectory(notes_dir) == 0 then
+        vim.fn.mkdir(notes_dir, "p")
+        vim.fn.mkdir(notes_dir .. "/inbox", "p")
+        vim.fn.mkdir(notes_dir .. "/daily", "p")
+        vim.fn.mkdir(notes_dir .. "/assets", "p")
+      end
+    end,
     cmd = {
       "ObsidianNew", "ObsidianOpen", "ObsidianQuickSwitch", "ObsidianSearch",
       "ObsidianFollowLink", "ObsidianBacklinks", "ObsidianTags", "ObsidianToday",
