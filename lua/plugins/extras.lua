@@ -89,15 +89,21 @@ return {
       { "]]",         function() Snacks.words.jump(vim.v.count1) end, desc = "Next reference" },
       { "[[",         function() Snacks.words.jump(-vim.v.count1) end, desc = "Prev reference" },
     },
-    init = function()
-      vim.api.nvim_create_autocmd("User", {
-        pattern = "VeryLazy",
-        callback = function()
-          _G.dd = function(...) Snacks.debug.inspect(...) end
-          _G.bt = function() Snacks.debug.backtrace() end
-          vim.print = _G.dd
-        end,
-      })
+    -- After Snacks loads, patch its global metatable's __index so it only
+    -- triggers require() for *string* keys. Without this, hydra.nvim's
+    -- `vim.tbl_deep_extend('force', getfenv(), {...})` recurses into the
+    -- Snacks global, calls islist(Snacks) which accesses Snacks[1], which
+    -- the autoloader interprets as `require('snacks.1')` and crashes.
+    config = function(_, opts)
+      require("snacks").setup(opts)
+      local mt = getmetatable(_G.Snacks)
+      if mt and type(mt.__index) == "function" then
+        local orig = mt.__index
+        mt.__index = function(t, k)
+          if type(k) ~= "string" then return nil end
+          return orig(t, k)
+        end
+      end
     end,
   },
 

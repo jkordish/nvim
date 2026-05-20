@@ -22,24 +22,40 @@ return {
   },
 
   -- ─────────────────────────────────────────────────────────────────────
-  -- Sublime-style multiple cursors.
+  -- Sublime-style multiple cursors. Replaced smoka7/multicursors.nvim
+  -- (which depends on hydra.nvim, broken on nvim 0.12 because hydra calls
+  -- `vim.tbl_deep_extend('force', getfenv(), {...})` and modern globals
+  -- contain values tbl_deep_extend can't merge).
   -- ─────────────────────────────────────────────────────────────────────
   {
-    "smoka7/multicursors.nvim",
+    "jake-stewart/multicursor.nvim",
+    branch = "1.0",
     event = "VeryLazy",
-    dependencies = { "smoka7/hydra.nvim" },
-    cmd = { "MCstart", "MCvisual", "MCclear", "MCpattern", "MCvisualPattern", "MCunderCursor" },
-    keys = {
-      { "<leader>m",  "<cmd>MCstart<CR>",        mode = { "n" }, desc = "Multicursor start" },
-      { "<leader>m",  "<cmd>MCvisual<CR>",       mode = { "v" }, desc = "Multicursor selection" },
-      { "<leader>mw", "<cmd>MCunderCursor<CR>",  desc = "Multicursor word" },
-      { "<leader>mP", "<cmd>MCpattern<CR>",      desc = "Multicursor pattern" },
-      { "<leader>mc", "<cmd>MCclear<CR>",        desc = "Multicursor clear" },
-    },
-    opts = {
-      hint_config = { border = "rounded", position = "bottom-right" },
-      generate_hints = { normal = true, insert = true, extend = true, config = { format = "%s | ", max_hints = 5 } },
-    },
+    config = function()
+      local mc = require("multicursor-nvim")
+      mc.setup()
+      local map = function(mode, lhs, rhs, desc)
+        vim.keymap.set(mode, lhs, rhs, { silent = true, desc = desc })
+      end
+      -- Add cursor above / below / matching word
+      map({ "n", "v" }, "<up>",   function() mc.lineAddCursor(-1) end, "MC: add cursor up")
+      map({ "n", "v" }, "<down>", function() mc.lineAddCursor( 1) end, "MC: add cursor down")
+      map({ "n", "v" }, "<leader>md", function() mc.matchAddCursor( 1) end, "MC: add cursor on next match")
+      map({ "n", "v" }, "<leader>mD", function() mc.matchAddCursor(-1) end, "MC: add cursor on prev match")
+      map({ "n", "v" }, "<leader>mA", function() mc.matchAllAddCursors() end,    "MC: add cursors on all matches")
+      map({ "n", "v" }, "<leader>ms", function() mc.matchSkipCursor( 1) end,     "MC: skip next match")
+      map({ "n", "v" }, "<leader>mw", function() mc.addCursorOperator() end,     "MC: add cursor on motion")
+      map("n",          "<leader>mc", function() mc.clearCursors() end,          "MC: clear cursors")
+      map("n",          "<esc>",      function()
+        if not mc.cursorsEnabled() then mc.enableCursors()
+        elseif mc.hasCursors() then mc.clearCursors()
+        else vim.cmd("nohlsearch") end
+      end, "Esc: clear cursors or nohl")
+      -- Visual-mode: start multicursor from selection
+      map("v", "<leader>m", function() mc.matchAddCursor(1) end, "MC: add cursor on next match (selection)")
+      -- Normal-mode: start at cursor on next occurrence of word
+      map("n", "<leader>m", function() mc.matchAddCursor(1) end, "MC: add cursor on next match (word)")
+    end,
   },
 
   -- ─────────────────────────────────────────────────────────────────────

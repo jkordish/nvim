@@ -14,11 +14,19 @@ return {
       return {
         window = { open = "alternate" },
         callbacks = {
+          -- REQUIRED in current flatten: identifies this nvim's IPC socket so
+          -- nested `nvim` calls from within :term can collapse into us.
+          pipe_path = function()
+            local n = vim.v.servername
+            if n and n ~= "" then return n end
+            return vim.env.NVIM or ""
+          end,
           should_block = function(argv)
             return vim.tbl_contains(argv, "-b")
           end,
           pre_open = function()
-            local term = require("toggleterm.terminal")
+            local ok, term = pcall(require, "toggleterm.terminal")
+            if not ok then return end
             local termid = term.get_focused_id()
             saved_terminal = term.get(termid)
           end,
