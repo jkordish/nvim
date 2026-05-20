@@ -147,6 +147,23 @@ function M.modules.dir()
   return { text = ("  %s "):format(name), fg = M.c.base, bg = M.c.sky, gui = "bold" }
 end
 
+-- FILE — active buffer's filetype icon + filename. Hidden in non-file
+-- buftypes (terminal/help/qf) and on empty buffers. The icon resolves via
+-- mini.icons / nvim-web-devicons (user.icons shim), so it reflects the
+-- actual ft instead of a generic chip.
+function M.modules.file()
+  local bt = vim.bo.buftype
+  if bt ~= "" then return { text = "" } end
+  local name = vim.api.nvim_buf_get_name(0)
+  if name == "" then return { text = "" } end
+  local short = vim.fn.fnamemodify(name, ":t")
+  if short == "" then return { text = "" } end
+  local ok, icons = pcall(require, "user.icons")
+  local glyph = ok and icons.ft(name, vim.bo.filetype).icon or ""
+  local mod = vim.bo.modified and " ●" or ""
+  return { text = (" %s %s%s "):format(glyph, short, mod), fg = M.c.base, bg = M.c.surface }
+end
+
 -- GIT BRANCH + AHEAD/BEHIND
 function M.modules.git()
   local cwd = vim.fn.getcwd()
@@ -168,7 +185,7 @@ function M.modules.git()
   return { text = " " .. s .. " ", fg = M.c.base, bg = M.c.mauve, gui = "bold" }
 end
 
--- GIT DIFF STATS (+ ~ -)
+-- GIT DIFF STATS (added / modified / deleted, with nerd-font glyphs)
 function M.modules.gitdiff()
   local cwd = vim.fn.getcwd()
   local s = memo("gd:" .. cwd, 4000, function()
@@ -181,7 +198,11 @@ function M.modules.gitdiff()
       elseif code:match("D") then d = d + 1 end
     end
     if a + m + d == 0 then return "" end
-    return string.format("+%d ~%d -%d", a, m, d)
+    local parts = {}
+    if a > 0 then table.insert(parts, ("%d"):format(a)) end
+    if m > 0 then table.insert(parts, ("%d"):format(m)) end
+    if d > 0 then table.insert(parts, ("%d"):format(d)) end
+    return table.concat(parts, " ")
   end)
   if s == "" then return { text = "" } end
   return { text = " " .. s .. " ", fg = M.c.base, bg = M.c.peach }
@@ -204,7 +225,7 @@ function M.modules.python()
     local v = trim(vim.fn.system("python3 --version 2>/dev/null")):match("Python ([%d.]+)") or ""
     return v
   end)
-  return { text = (" %s %s "):format(name, ver), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
+  return { text = (" 🐍 %s %s "):format(name, ver), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
 end
 
 -- NODE (only in JS/TS contexts)
@@ -219,14 +240,14 @@ function M.modules.node()
   return { text = ("  %s "):format(ver), fg = M.c.base, bg = M.c.green, gui = "bold" }
 end
 
--- GO
+-- GO — gopher (starship convention)
 function M.modules.go()
   if vim.bo.filetype ~= "go" and not find_up("go.mod") then return { text = "" } end
   local ver = memo("gover", 60000, function()
     return trim(vim.fn.system("go version 2>/dev/null")):match("go(%S+)") or ""
   end)
-  if ver == "" then return { text = "" } end
-  return { text = (" 󰟓 %s "):format(ver), fg = M.c.base, bg = M.c.sapphire, gui = "bold" }
+  return { text = (" 🐹 %s "):format(ver ~= "" and ver or "go"),
+           fg = M.c.base, bg = M.c.sapphire, gui = "bold" }
 end
 
 -- RUST
@@ -235,8 +256,94 @@ function M.modules.rust()
   local ver = memo("rustver", 60000, function()
     return trim(vim.fn.system("rustc --version 2>/dev/null")):match("rustc (%S+)") or ""
   end)
+  return { text = (" 🦀 %s "):format(ver ~= "" and ver or "rust"),
+           fg = M.c.base, bg = M.c.peach, gui = "bold" }
+end
+
+-- LUA — only in lua context (very common in your nvim config edits)
+function M.modules.lua()
+  if vim.bo.filetype ~= "lua" then return { text = "" } end
+  local ver = memo("luaver", 60000, function()
+    local v = trim(vim.fn.system("lua -v 2>&1")):match("Lua (%S+)")
+            or trim(vim.fn.system("luajit -v 2>&1")):match("LuaJIT (%S+)")
+    return v or ""
+  end)
+  if ver == "" then ver = "5.x" end
+  return { text = (" 󰢱 %s "):format(ver), fg = M.c.base, bg = M.c.blue, gui = "bold" }
+end
+
+-- RUBY — ruby gem (starship uses 💎)
+function M.modules.ruby()
+  if vim.bo.filetype ~= "ruby" and not find_up("Gemfile") then return { text = "" } end
+  local ver = memo("rbver", 60000, function()
+    return trim(vim.fn.system("ruby -v 2>/dev/null")):match("ruby (%S+)") or ""
+  end)
+  return { text = (" 💎 %s "):format(ver ~= "" and ver or "ruby"),
+           fg = M.c.base, bg = M.c.red, gui = "bold" }
+end
+
+-- ELIXIR — water drop (starship convention)
+function M.modules.elixir()
+  if vim.bo.filetype ~= "elixir" and not find_up("mix.exs") then return { text = "" } end
+  local ver = memo("exver", 60000, function()
+    return trim(vim.fn.system("elixir --version 2>/dev/null")):match("Elixir (%S+)") or ""
+  end)
+  return { text = (" 💧 %s "):format(ver ~= "" and ver or "elixir"),
+           fg = M.c.base, bg = M.c.mauve, gui = "bold" }
+end
+
+-- DENO — separate from node when a deno.json/deno.jsonc is present
+function M.modules.deno()
+  if not find_up("deno.json") and not find_up("deno.jsonc") then return { text = "" } end
+  local ver = memo("denover", 60000, function()
+    return trim(vim.fn.system("deno --version 2>/dev/null")):match("deno (%S+)") or ""
+  end)
   if ver == "" then return { text = "" } end
-  return { text = ("  %s "):format(ver), fg = M.c.base, bg = M.c.peach, gui = "bold" }
+  return { text = (" 󰟔 %s "):format(ver), fg = M.c.base, bg = M.c.teal, gui = "bold" }
+end
+
+-- BUN — when bun.lock or bun.lockb is present
+function M.modules.bun()
+  if not find_up("bun.lock") and not find_up("bun.lockb") then return { text = "" } end
+  local ver = memo("bunver", 60000, function()
+    return trim(vim.fn.system("bun --version 2>/dev/null"))
+  end)
+  if ver == "" then return { text = "" } end
+  return { text = (" 󰳏 %s "):format(ver), fg = M.c.base, bg = M.c.peach, gui = "bold" }
+end
+
+-- JAVA
+function M.modules.java()
+  if vim.bo.filetype ~= "java"
+     and not find_up("pom.xml") and not find_up("build.gradle")
+     and not find_up("build.gradle.kts") then return { text = "" } end
+  local ver = memo("javaver", 60000, function()
+    -- `java -version` prints to stderr; capture both
+    local out = vim.fn.system("java -version 2>&1")
+    return out:match('version "([^"]+)"') or out:match("version (%S+)") or ""
+  end)
+  if ver == "" then return { text = "" } end
+  return { text = (" 󰬷 %s "):format(ver), fg = M.c.base, bg = M.c.red, gui = "bold" }
+end
+
+-- ZIG — zigzag (starship convention)
+function M.modules.zig()
+  if vim.bo.filetype ~= "zig" and not find_up("build.zig") then return { text = "" } end
+  local ver = memo("zigver", 60000, function()
+    return trim(vim.fn.system("zig version 2>/dev/null"))
+  end)
+  return { text = (" ↯ %s "):format(ver ~= "" and ver or "zig"),
+           fg = M.c.base, bg = M.c.peach, gui = "bold" }
+end
+
+-- PHP — elephant (starship convention)
+function M.modules.php()
+  if vim.bo.filetype ~= "php" and not find_up("composer.json") then return { text = "" } end
+  local ver = memo("phpver", 60000, function()
+    return trim(vim.fn.system("php -v 2>/dev/null")):match("PHP (%S+)") or ""
+  end)
+  return { text = (" 🐘 %s "):format(ver ~= "" and ver or "php"),
+           fg = M.c.base, bg = M.c.lavender, gui = "bold" }
 end
 
 -- DOCKER (when Dockerfile in repo)
@@ -278,7 +385,16 @@ function M.modules.aws()
   return { text = ("  %s "):format(p), fg = M.c.base, bg = M.c.peach }
 end
 
--- BATTERY (macOS) — only shows when below 100% or charging
+-- BATTERY (macOS) — 11-step gradient on discharge, distinct charging glyphs
+-- when on AC. Color escalates: red < 20%, peach < 40%, default otherwise.
+-- Hidden when fully charged + plugged so it doesn't waste a slot.
+local BATT_DISCHARGE = {  -- index 1..11 = 0%, 10%, 20%, ..., 100%
+  "󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹",
+}
+local BATT_CHARGING  = {  -- charging variants (lightning bolt embedded)
+  "󰢟", "󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅",
+}
+
 function M.modules.battery()
   if vim.fn.has("mac") ~= 1 then return { text = "" } end
   local s = memo("battery", 30000, function()
@@ -292,20 +408,30 @@ function M.modules.battery()
   local pct, mode = s:match("(%d+)|(%w+)")
   pct = tonumber(pct)
   if mode == "ac" and pct >= 99 then return { text = "" } end  -- hide when fully charged + plugged
-  local icon
-  if mode == "ac" then icon = " "
-  elseif pct >= 80 then icon = " "
-  elseif pct >= 60 then icon = " "
-  elseif pct >= 40 then icon = " "
-  elseif pct >= 20 then icon = " "
-  else icon = " " end
-  local bg = (pct < 20 and mode == "bat") and M.c.red or M.c.surface
-  return { text = (" %s %d%% "):format(icon, pct), fg = M.c.text, bg = bg }
+  local idx = math.max(1, math.min(11, math.floor(pct / 10) + 1))
+  local icon = (mode == "ac" and BATT_CHARGING or BATT_DISCHARGE)[idx]
+  local fg, bg = M.c.text, M.c.surface
+  if mode == "bat" then
+    if pct < 20      then fg, bg = M.c.base, M.c.red
+    elseif pct < 40  then fg = M.c.peach end
+  elseif mode == "ac" then
+    fg = M.c.green   -- charging always reads positive
+  end
+  return { text = (" %s %d%% "):format(icon, pct), fg = fg, bg = bg, gui = (pct < 20 and "bold" or nil) }
 end
 
--- TIME
+-- TIME — glyph cycles with time of day: sunrise → midday → sunset → moon.
+-- Small detail but the chip changes character through the day, marking
+-- passage subtly without being a clock.
 function M.modules.time()
-  return { text = ("  %s "):format(os.date("%H:%M")), fg = M.c.base, bg = M.c.lavender, gui = "bold" }
+  local h = tonumber(os.date("%H"))
+  local glyph
+  if     h >= 5  and h < 8  then glyph = "󰖜"      -- sunrise
+  elseif h >= 8  and h < 17 then glyph = "󰖙"      -- midday sun
+  elseif h >= 17 and h < 20 then glyph = "󰖚"      -- sunset
+  else                            glyph = "󰖔" end  -- moon / night
+  return { text = (" %s %s "):format(glyph, os.date("%H:%M")),
+           fg = M.c.base, bg = M.c.lavender, gui = "bold" }
 end
 
 -- ─── EXTENDED MODULES ──────────────────────────────────────────────────────
@@ -420,7 +546,7 @@ function M.modules.cpu()
   local spark = M.spark("cpu", norm, 6, 1.5)
   local fg = M.c.text
   if norm > 1 then fg = M.c.red elseif norm > 0.75 then fg = M.c.peach end
-  return { text = (" cpu %s %.2f "):format(spark, one), fg = fg, bg = M.c.surface }
+  return { text = (" 󰍛 %s %.2f "):format(spark, one), fg = fg, bg = M.c.surface }
 end
 
 -- RAM USAGE — % used
@@ -452,7 +578,7 @@ function M.modules.ram()
   local spark = M.spark("ram", pct, 6, 100)
   local fg = M.c.text
   if pct > 90 then fg = M.c.red elseif pct > 75 then fg = M.c.peach end
-  return { text = (" ram %s %d%% "):format(spark, pct), fg = fg, bg = M.c.surface }
+  return { text = (" 󰘚 %s %d%% "):format(spark, pct), fg = fg, bg = M.c.surface }
 end
 
 -- CLOUD ACCOUNT — gcloud / aws (whichever is set)
@@ -591,7 +717,7 @@ function M.modules.macro()
   local reg = vim.fn.reg_recording()
   if reg == "" then return { text = "" } end
   local lit = (math.floor(vim.uv.now() / 500) % 2) == 0
-  local icon = lit and "●" or "○"
+  local icon = lit and "" or ""   -- nerd-font record glyph / empty circle
   return { text = (" %s REC @%s "):format(icon, reg),
            fg = M.c.base, bg = M.c.red, gui = "bold" }
 end
@@ -646,7 +772,7 @@ function M.modules.save_pulse()
   else
     bg = M.c.red
   end
-  local icon = p.ok and "✓" or "✗"
+  local icon = p.ok and "" or ""   -- nerd-font check / cross
   local name = p.name
   if #name > 22 then name = name:sub(1, 20) .. "…" end
   return { text = (" %s saved · %s "):format(icon, name),
@@ -752,7 +878,7 @@ function M.modules.engage()
   -- Color the chip mauve once you've hit the goal; otherwise stays neutral.
   local bg, fg = M.c.surface, M.c.text
   if filled >= 5 then bg, fg = M.c.mauve, M.c.base end
-  return { text = (" ⌨ %s %s · %dm "):format(_fmt_count(M._engage.keys_today), dots, mins),
+  return { text = (" 󰌌 %s %s · %dm "):format(_fmt_count(M._engage.keys_today), dots, mins),
            fg = fg, bg = bg }
 end
 
@@ -767,7 +893,7 @@ function M.modules.streak()
   elseif s >= 14 then bg = M.c.peach     -- "two weeks" — hot
   elseif s >= 7 then bg = M.c.yellow     -- "week" — warm
   else bg = M.c.surface end              -- 2-6 days — subtle
-  return { text = (" 🔥 %dd "):format(s),
+  return { text = (" 󰈸 %dd "):format(s),    -- nerd-font flame
            fg = (bg == M.c.surface) and M.c.text or M.c.base, bg = bg, gui = "bold" }
 end
 
@@ -891,7 +1017,7 @@ function M.modules.todos()
     hit = { tick = tick, count = count }; _todo_cache[buf] = hit
   end
   if hit.count == 0 then return { text = "" } end
-  return { text = (" ✎ %d "):format(hit.count), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
+  return { text = (" 󱅄 %d "):format(hit.count), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
 end
 
 -- Unresolved merge-conflict markers in current buffer. Promoted to red bg
@@ -907,7 +1033,7 @@ function M.modules.conflicts()
     hit = { tick = tick, count = count }; _conflict_cache[buf] = hit
   end
   if hit.count == 0 then return { text = "" } end
-  return { text = (" ⚠ %d conflict%s "):format(hit.count, hit.count > 1 and "s" or ""),
+  return { text = (" 󰦓 %d conflict%s "):format(hit.count, hit.count > 1 and "s" or ""),
            fg = M.c.base, bg = M.c.red, gui = "bold" }
 end
 
@@ -918,9 +1044,9 @@ function M.modules.dap_state()
   local session = dap.session and dap.session(); if not session then return { text = "" } end
   local status = session.stopped_thread_id and "stopped" or "running"
   if status == "stopped" then
-    return { text = " 󰃤 paused ", fg = M.c.base, bg = M.c.mauve, gui = "bold" }
+    return { text = "  paused ", fg = M.c.base, bg = M.c.mauve, gui = "bold" }
   else
-    return { text = (" 󰃤 %s debug "):format(spin_frame()), fg = M.c.base, bg = M.c.teal, gui = "bold" }
+    return { text = (" %s  debug "):format(spin_frame()), fg = M.c.base, bg = M.c.teal, gui = "bold" }
   end
 end
 
@@ -1203,6 +1329,7 @@ function M.left()
     pri(100, M.modules.user_short),
     M.modules.ssh(),
     clk(pri( 80, M.modules.dir),            lua(function() require("user.spotlight").open() end)),
+    clk(pri( 80, M.modules.file),           lua(function() vim.cmd("e %") end)),
     pri(130, M.modules.project_type),
     pri(140, M.modules.package_version),
     clk(pri(100, M.modules.git),            first_of("LazyGit", "Neogit")),
@@ -1229,10 +1356,18 @@ function M.right()
     pri(120, M.modules.cmd_duration),
     clk(pri(140, M.modules.ai),             cmd("AI")),
     clk(pri(140, M.modules.pomo),           first_of("TimerStop", "TimerSession")),
+    pri(150, M.modules.lua),
     pri(150, M.modules.python),
     pri(150, M.modules.node),
+    pri(150, M.modules.deno),
+    pri(150, M.modules.bun),
     pri(150, M.modules.go),
     pri(150, M.modules.rust),
+    pri(150, M.modules.ruby),
+    pri(150, M.modules.elixir),
+    pri(150, M.modules.java),
+    pri(150, M.modules.zig),
+    pri(150, M.modules.php),
     pri(160, M.modules.terraform),
     pri(160, M.modules.docker),
     pri(160, M.modules.k8s),
