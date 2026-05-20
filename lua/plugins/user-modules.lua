@@ -51,6 +51,12 @@ return {
       require("user.windows").setup()
       require("user.dock").setup()
       require("user.projects").setup()
+      require("user.toast").setup()
+      require("user.jumppulse").setup()
+      require("user.lsp_ui").setup()
+      require("user.hints").setup()
+      require("user.profiles").setup()
+      require("user.recall").setup()
 
       -- ─── cockpit / mission control ───
       require("user.compass").setup()
@@ -185,6 +191,15 @@ return {
       -- ═════ PROJECTS ═════
       { "<leader>oo", function() require("user.projects").show() end,       desc = "Projects: pick" },
       { "<leader>oP", function() require("user.projects").pin() end,        desc = "Projects: pin cwd" },
+
+      -- ═════ RECALL ═════
+      { "<leader>z",  function() require("user.recall").pop() end,           desc = "Recall: undo last context shift" },
+
+      -- ═════ PEEK ═════
+      { "gp",  function() require("user.peek").definition()      end, desc = "Peek: definition" },
+      { "gP",  function() require("user.peek").references()      end, desc = "Peek: references" },
+      { "gT",  function() require("user.peek").type_definition() end, desc = "Peek: type" },
+      { "gI",  function() require("user.peek").implementation()  end, desc = "Peek: implementation" },
 
       -- ═════ COCKPIT (<leader>!) ═════
       { "<leader>!!", function() require("user.cockpit").toggle() end, desc = "Cockpit toggle" },

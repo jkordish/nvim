@@ -32,9 +32,15 @@ return {
         formats = { "png", "jpg", "jpeg", "gif", "bmp", "webp", "avif", "svg" },
         doc = { inline = true, max_width = 80, max_height = 40 },
         convert = { magick = { "-density", "200" } },
-        -- Disable formats that need extra tools we don't have installed:
         math = { enabled = false },    -- needs tectonic/pdflatex
-        diagram = { enabled = false }, -- mermaid needs mmdc
+        -- Mermaid + d2 + plantuml fenced blocks render inline as images.
+        -- mmdc (mermaid-cli) is on PATH so this just works in Ghostty.
+        diagram = {
+          enabled = true,
+          inline = true,
+          max_width = 100,
+          max_height = 50,
+        },
         pdf = { enabled = false },     -- needs ghostscript
       },
       notifier = { enabled = false },  -- using nvim-notify

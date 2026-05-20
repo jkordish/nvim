@@ -186,6 +186,17 @@ end
 local function bump_ctx(fp, id)
   state.ctx_picks[fp] = state.ctx_picks[fp] or {}
   state.ctx_picks[fp][id] = (state.ctx_picks[fp][id] or 0) + 1
+  -- A pick is an implicit endorsement — reset any skips against this id in
+  -- this context so it doesn't stay suppressed after the user came around.
+  if state.ctx_skips and state.ctx_skips[fp] then
+    state.ctx_skips[fp][id] = nil
+  end
+end
+
+local function bump_skip(fp, id)
+  state.ctx_skips = state.ctx_skips or {}
+  state.ctx_skips[fp] = state.ctx_skips[fp] or {}
+  state.ctx_skips[fp][id] = (state.ctx_skips[fp][id] or 0) + 1
 end
 local function bump_seq(from, to)
   state.sequences[from] = state.sequences[from] or {}
@@ -744,6 +755,10 @@ local function rank(c)
     if ok_when and base then
       local ok_label, label = pcall(a.label, c)
       if ok_label and label and label ~= "" then
+        -- Adaptive suppression: drop actions you've skipped 3+ times in this
+        -- context. Cleared per-action by a real pick (see bump_ctx).
+        local skip_count = ((state.ctx_skips or {})[fp] or {})[a.id] or 0
+        if skip_count < 3 then
         local p = base + recency_bonus(a.id)
         -- Project-scoped: ctx_picks is keyed by full fingerprint including project name
         local ctx_count = (state.ctx_picks[fp] or {})[a.id] or 0
@@ -763,6 +778,7 @@ local function rank(c)
           next_hint = next_hint,
           is_project = a._is_project or false,
         })
+        end   -- skip_count < 3
       end
     end
   end
@@ -834,12 +850,25 @@ local function teardown_autocmds()
   end
 end
 
+-- When the panel closes WITHOUT a pick, mark the shown actions as "skipped"
+-- in the current context. A flag on panel (set by the pick handler) tells us
+-- a pick happened so we don't penalize the right answer.
 local function close()
   teardown_autocmds()
+  -- Record skips for every shown item that wasn't picked.
+  if not panel._picked and panel.last_fp and panel.items then
+    for _, item in ipairs(panel.items) do
+      if item.action and item.action.id then
+        bump_skip(panel.last_fp, item.action.id)
+      end
+    end
+    save_state()
+  end
   if panel.win and vim.api.nvim_win_is_valid(panel.win) then
     vim.api.nvim_win_close(panel.win, true)
   end
-  panel.win, panel.buf, panel.items, panel.last_fp = nil, nil, {}, nil
+  panel.win, panel.buf, panel.items, panel.last_fp, panel._picked =
+    nil, nil, {}, nil, nil
 end
 
 -- Render the focused item's preview as a virt_line below it. Cursor-driven;
@@ -1029,6 +1058,7 @@ end
 function M.pick(idx)
   local it = panel.items[idx]
   if not it then return end
+  panel._picked = true   -- suppress skip-bookkeeping in close()
   local c = ctx()
   local fp = fingerprint(c)
   bump_usage(it.action.id)
@@ -1240,6 +1270,10 @@ function M.setup()
   vim.api.nvim_create_user_command("SuggestProject",       M.project_info,    { desc = "Inspect the .suggest.lua loaded for this project" })
   vim.api.nvim_create_user_command("SuggestProjectReload", M.project_reload,  { desc = "Force re-read of .suggest.lua" })
   vim.api.nvim_create_user_command("SuggestProjectEdit",   M.project_edit,    { desc = "Edit (or create) .suggest.lua for this project" })
+  vim.api.nvim_create_user_command("SuggestUnhide", function()
+    state.ctx_skips = {}; save_state()
+    require("user.brand").notify("suggest · all skip-counters cleared", nil, { title = "suggest" })
+  end, { desc = "Clear adaptive skip-suppression (un-hide actions)" })
 
   -- Re-evaluate project actions when the working directory changes.
   vim.api.nvim_create_autocmd("DirChanged", {
