@@ -133,7 +133,11 @@ local function request(method, path, body, cb)
       local payload = raw:gsub("\n?__HTTPSTATUS__%d+%s*$", "")
       if status >= 200 and status < 300 then
         if payload == "" then return cb(true, {}, status) end
-        local ok, parsed = pcall(vim.json.decode, payload)
+        -- luanil=object turns JSON nulls into real Lua nil (otherwise we get
+        -- vim.NIL userdata, which `or {}` doesn't replace — every field
+        -- access like `(fields.assignee or {}).displayName` then crashes
+        -- with "attempt to index a userdata value" on unassigned issues).
+        local ok, parsed = pcall(vim.json.decode, payload, { luanil = { object = true, array = true } })
         if ok then cb(true, parsed, status) else cb(false, "bad JSON: " .. payload:sub(1, 200), status) end
       else
         cb(false, ("HTTP %d · %s"):format(status, payload:sub(1, 300)), status)
@@ -164,6 +168,8 @@ end
 
 function M.search(jql, cb, max)
   _cache.last_jql = jql
+  -- The `status` field carries `statusCategory.colorName` by default, so the
+  -- picker chips get Jira's real category color without extra `expand`.
   request("POST", "/rest/api/3/search/jql", {
     jql = jql,
     fields = { "summary", "status", "assignee", "priority", "updated" },
@@ -189,6 +195,19 @@ end
 
 function M.list_transitions(key, cb)
   request("GET", "/rest/api/3/issue/" .. url_encode(key) .. "/transitions", nil, cb)
+end
+
+function M.search_assignable(key, query, cb)
+  request("GET",
+    "/rest/api/3/user/assignable/search?issueKey=" .. url_encode(key)
+      .. "&query=" .. url_encode(query or "") .. "&maxResults=20",
+    nil, cb)
+end
+
+function M.set_assignee(key, account_id, cb)
+  -- Passing accountId = nil unassigns; "-1" assigns to default.
+  request("PUT", "/rest/api/3/issue/" .. url_encode(key) .. "/assignee",
+    { accountId = account_id }, cb)
 end
 
 function M.do_transition(key, transition_id, cb)
@@ -249,8 +268,31 @@ end
 -- ─── issue detail float ───────────────────────────────────────────────────
 local NS = vim.api.nvim_create_namespace("user_jira")
 
-local function status_chip_group(name)
-  local n = (name or ""):lower()
+-- Map Jira's statusCategory.colorName to one of our brand chip highlights.
+-- Atlassian's documented colorName values: blue-gray (To Do), yellow (In
+-- Progress), green (Done) — older instances also send "warm-red" or "red".
+local function chip_group_for_category(color_name)
+  if not color_name then return nil end
+  color_name = color_name:lower()
+  if color_name == "green"            then return "BrandChipOk"   end
+  if color_name == "yellow"           then return "BrandChipInfo" end
+  if color_name == "blue-gray"
+     or color_name == "medium-gray"   then return "BrandChipSurface" end
+  if color_name:find("red")           then return "BrandChipErr"  end
+  return nil
+end
+
+-- Pick a chip highlight group for a status. Prefers Jira's own category
+-- color when we have the full status object; falls back to name-heuristic
+-- when we only have a name string (search-result rows + statusline chip
+-- before the full issue is cached).
+local function status_chip_group(status_or_name)
+  if type(status_or_name) == "table" then
+    local hl = chip_group_for_category(((status_or_name.statusCategory or {}).colorName))
+    if hl then return hl end
+    status_or_name = status_or_name.name
+  end
+  local n = (status_or_name or ""):lower()
   if n:find("done") or n:find("closed") or n:find("resolved") then return "BrandChipOk" end
   if n:find("progress") or n:find("review") or n:find("test")  then return "BrandChipInfo" end
   if n:find("block")    or n:find("hold")                       then return "BrandChipErr" end
@@ -312,9 +354,10 @@ local function render_issue(buf, data, key)
     { end_col = 4 + #key, hl_group = "BrandChipAccent" })
   pcall(vim.api.nvim_buf_set_extmark, buf, NS, 1, 4 + #key,
     { end_col = #lines[2], hl_group = "BrandFloatTitle" })
-  -- highlight status chip
+  -- highlight status chip — pass the full status object so we get its
+  -- statusCategory color when available, not just a name heuristic
   pcall(vim.api.nvim_buf_set_extmark, buf, NS, 3, 14,
-    { end_col = 14 + #status + 1, hl_group = status_chip_group(status) })
+    { end_col = 14 + #status + 1, hl_group = status_chip_group(fields.status) })
   -- muted labels
   for i, line in ipairs(lines) do
     local label = line:match("^%s+([%a]+)%s%s")
@@ -367,6 +410,7 @@ function M.show_issue(key)
     vim.keymap.set("n", "o", function() M.open_in_browser(key) end, opts)
     vim.keymap.set("n", "c", function() r.close(); vim.schedule(function() M.prompt_comment(key) end) end, opts)
     vim.keymap.set("n", "t", function() r.close(); vim.schedule(function() M.prompt_transition(key) end) end, opts)
+    vim.keymap.set("n", "a", function() r.close(); vim.schedule(function() M.prompt_assignee(key) end) end, opts)
     vim.keymap.set("n", "r", function()
       _cache.issues[key] = nil
       r.close(); vim.schedule(function() M.show_issue(key) end)
@@ -444,6 +488,53 @@ function M.prompt_comment(key)
   -- normal-mode quick cancel
   vim.keymap.set("n", "q", "<cmd>close<CR>",
     { buffer = buf, silent = true, nowait = true })
+end
+
+-- ─── assignee prompt ──────────────────────────────────────────────────────
+-- Prompts for a search query (name/email substring), lets you pick from
+-- assignable users, then PUTs the new assignee. Empty pick unassigns.
+function M.prompt_assignee(key)
+  if not key or key == "" then key = M.current_ticket() end
+  if not key then brand.notify("no issue key", vim.log.levels.WARN, { title = "jira" }); return end
+  vim.ui.input({ prompt = "assignee search (blank = unassign): " }, function(q)
+    if q == nil then return end
+    if q == "" then
+      M.set_assignee(key, vim.NIL, function(ok, err)
+        if ok then
+          _cache.issues[key] = nil
+          brand.notify("unassigned  " .. key, nil, { title = "jira" })
+        else
+          brand.notify("unassign failed: " .. tostring(err), vim.log.levels.ERROR, { title = "jira" })
+        end
+      end)
+      return
+    end
+    M.search_assignable(key, q, function(ok, users)
+      if not ok then
+        brand.notify("user search failed: " .. tostring(users), vim.log.levels.ERROR, { title = "jira" })
+        return
+      end
+      if type(users) ~= "table" or #users == 0 then
+        brand.notify("no users matched", nil, { title = "jira" }); return
+      end
+      local items = vim.tbl_map(function(u)
+        return ("%-26s  %s"):format(u.displayName or "?", u.emailAddress or "")
+      end, users)
+      vim.ui.select(items, { prompt = "assign " .. key .. " to: " }, function(_, idx)
+        if not idx then return end
+        local pick = users[idx]
+        M.set_assignee(key, pick.accountId, function(ok2, err)
+          if ok2 then
+            _cache.issues[key] = nil
+            brand.notify(key .. "  →  " .. (pick.displayName or "?"),
+              nil, { title = "jira" })
+          else
+            brand.notify("assign failed: " .. tostring(err), vim.log.levels.ERROR, { title = "jira" })
+          end
+        end)
+      end)
+    end)
+  end)
 end
 
 -- ─── transition prompt ────────────────────────────────────────────────────
@@ -569,9 +660,10 @@ local function pick_from_search(title, issues, on_select)
     for i, it in ipairs(filtered) do
       pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, 1,
         { end_col = 1 + #it.key, hl_group = "BrandAccent" })
-      local sname = ((it.fields or {}).status or {}).name or ""
+      local status_obj = (it.fields or {}).status or {}
+      local sname = status_obj.name or ""
       pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, 15,
-        { end_col = 15 + math.min(14, #sname), hl_group = status_chip_group(sname) })
+        { end_col = 15 + math.min(14, #sname), hl_group = status_chip_group(status_obj) })
     end
     if #filtered > 0 then pcall(vim.api.nvim_win_set_cursor, list_win, { 1, 0 }) end
   end
@@ -876,6 +968,217 @@ function M.show_filters()
   end)
 end
 
+-- ─── project + issue-type discovery (cached) ─────────────────────────────
+-- Cached in-memory only; cheap because each call is a single GET. Refresh by
+-- closing nvim or calling refresh = true.
+local _projects, _issuetypes_by_project = nil, {}
+
+local function fetch_projects(cb, refresh)
+  if _projects and not refresh then return cb(true, _projects) end
+  request("GET", "/rest/api/3/project/search?maxResults=100&orderBy=lastIssueUpdatedTime", nil,
+    function(ok, data)
+      if ok then _projects = data.values or {} end
+      cb(ok, ok and _projects or data)
+    end)
+end
+
+local function fetch_issuetypes(project_key_or_id, cb)
+  if _issuetypes_by_project[project_key_or_id] then
+    return cb(true, _issuetypes_by_project[project_key_or_id])
+  end
+  request("GET",
+    "/rest/api/3/issue/createmeta/" .. url_encode(project_key_or_id) .. "/issuetypes",
+    nil,
+    function(ok, data)
+      if ok then _issuetypes_by_project[project_key_or_id] = data.issueTypes or data.values or {} end
+      cb(ok, ok and _issuetypes_by_project[project_key_or_id] or data)
+    end)
+end
+
+function M.create_issue(payload, cb)
+  request("POST", "/rest/api/3/issue", payload, cb)
+end
+
+-- ─── :JiraCreate composer ─────────────────────────────────────────────────
+-- Flow: project pick → issue-type pick → buffer (first line = summary,
+-- blank, then description). :w creates the issue and opens it.
+function M.create_flow(default_project)
+  if not ensure_configured() then return end
+  brand.notify("loading projects …", nil, { title = "jira" })
+  fetch_projects(function(ok, projects)
+    if not ok then
+      brand.notify("projects failed: " .. tostring(projects), vim.log.levels.ERROR, { title = "jira" })
+      return
+    end
+    -- pre-pick the project if a default key matches
+    local pre = nil
+    for _, p in ipairs(projects) do
+      if default_project and (p.key == default_project:upper()) then pre = p end
+    end
+    local function pick_type_then_open(project)
+      brand.notify("loading issue types for " .. project.key .. " …", nil, { title = "jira" })
+      fetch_issuetypes(project.key, function(tok, types)
+        if not tok then
+          brand.notify("types failed: " .. tostring(types), vim.log.levels.ERROR, { title = "jira" })
+          return
+        end
+        local labels = vim.tbl_map(function(t)
+          return ("%-14s  %s"):format(t.name, t.description or "")
+        end, types)
+        vim.ui.select(labels, { prompt = "type for " .. project.key .. ": " }, function(_, idx)
+          if not idx then return end
+          M._open_create_composer(project, types[idx])
+        end)
+      end)
+    end
+    if pre then return pick_type_then_open(pre) end
+    local items = vim.tbl_map(function(p) return ("%-8s  %s"):format(p.key, p.name) end, projects)
+    vim.ui.select(items, { prompt = "project: " }, function(_, idx)
+      if not idx then return end
+      pick_type_then_open(projects[idx])
+    end)
+  end)
+end
+
+function M._open_create_composer(project, itype)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype   = "acwrite"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].filetype  = "markdown"
+  vim.api.nvim_buf_set_name(buf, "jira-create://" .. project.key .. "-" .. os.time())
+
+  -- The buffer convention: line 1 = summary, line 2 blank, lines 3+ = body.
+  -- Header line stays in the buffer so the user can see + edit it normally.
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "(summary on this line)", "",
+    "<!-- write the description below this line · markdown OK · :w submits -->",
+    "",
+  })
+
+  local W = math.max(64, math.floor(vim.o.columns * 0.7))
+  local H = math.max(14, math.floor(vim.o.lines   * 0.55))
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor", style = "minimal", border = "rounded",
+    title = brand.title("create · " .. project.key .. " · " .. itype.name
+      .. "   :w submit · :q cancel", { glyph = "◆" }),
+    title_pos = "left",
+    width = W, height = H,
+    row = math.floor((vim.o.lines   - H) / 2),
+    col = math.floor((vim.o.columns - W) / 2),
+  })
+  pcall(function()
+    vim.wo[win].winhighlight = "Normal:BrandFloat,NormalFloat:BrandFloat,FloatBorder:BrandFloatBorder,FloatTitle:BrandFloatTitle"
+    vim.wo[win].wrap = true; vim.wo[win].linebreak = true
+  end)
+  -- jump to summary line and select-all so first keystroke replaces placeholder
+  vim.api.nvim_win_set_cursor(win, { 1, 0 })
+  vim.cmd("normal! V")
+  vim.cmd("normal! \27")   -- exit visual; cursor still on line 1
+
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer = buf, once = true,
+    callback = function()
+      local lines   = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      local summary = vim.fn.trim(lines[1] or "")
+      -- description: skip placeholder header lines (<!-- … --> + blanks)
+      local body_lines = {}
+      for i = 2, #lines do
+        local l = lines[i] or ""
+        if not l:match("^%s*<!%-%-") then table.insert(body_lines, l) end
+      end
+      local description = vim.fn.trim(table.concat(body_lines, "\n"))
+
+      vim.bo[buf].modified = false
+      if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+
+      if summary == "" or summary == "(summary on this line)" then
+        brand.notify("summary is required", vim.log.levels.WARN, { title = "jira" })
+        return
+      end
+
+      local payload = {
+        fields = {
+          project   = { key = project.key },
+          summary   = summary,
+          issuetype = { id = itype.id },
+        },
+      }
+      if description ~= "" then
+        payload.fields.description = {
+          type = "doc", version = 1,
+          content = { { type = "paragraph", content = { { type = "text", text = description } } } },
+        }
+      end
+      brand.notify("creating issue …", nil, { title = "jira" })
+      M.create_issue(payload, function(ok, data)
+        if not ok then
+          brand.notify("create failed: " .. tostring(data), vim.log.levels.ERROR, { title = "jira" })
+          return
+        end
+        local new_key = data.key
+        brand.notify("created  " .. new_key, nil, { title = "jira" })
+        vim.schedule(function() M.show_issue(new_key) end)
+      end)
+    end,
+  })
+
+  vim.keymap.set("n", "q", "<cmd>close<CR>",
+    { buffer = buf, silent = true, nowait = true })
+end
+
+-- ─── inline KEY-NNN chip decoration (any buffer) ─────────────────────────
+-- Every JIRA-NNN occurrence in any normal-text buffer lights up as a brand
+-- chip. Color reflects the cached status if we've fetched the issue (else
+-- neutral). Driven by a decoration provider so it only runs for lines that
+-- are actually rendered — cheap on big files.
+--
+-- Skip rules:
+--   • non-file buftypes (terminals, prompts, our own floats)
+--   • filetypes obviously not text-bearing (help, qf, lazy panels, etc.)
+--   • lines > 2000 chars (likely minified)
+local CHIP_NS = vim.api.nvim_create_namespace("user_jira_inline_chips")
+local CHIP_PAT = "([A-Z][A-Z0-9]+%-%d+)"
+local CHIP_SKIP_FT = {
+  help = 1, qf = 1, ["neo-tree"] = 1, lazy = 1, mason = 1,
+  ["TelescopePrompt"] = 1, NvimTree = 1, dashboard = 1,
+  starter = 1, snacks_dashboard = 1, alpha = 1, terminal = 1,
+}
+
+local function chip_should_decorate(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return false end
+  local bt = vim.bo[bufnr].buftype
+  if bt == "terminal" or bt == "prompt" or bt == "quickfix" then return false end
+  if CHIP_SKIP_FT[vim.bo[bufnr].filetype] then return false end
+  return true
+end
+
+local function chip_hl_for(key)
+  local hit = _cache.issues[key]
+  if hit and hit.data.fields and hit.data.fields.status then
+    return status_chip_group(hit.data.fields.status)
+  end
+  return "BrandChipSurface"
+end
+
+function M._setup_chip_decoration()
+  vim.api.nvim_set_decoration_provider(CHIP_NS, {
+    on_win = function(_, _, bufnr) return chip_should_decorate(bufnr) end,
+    on_line = function(_, _, bufnr, row)
+      local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
+      if not line or #line == 0 or #line > 2000 then return end
+      local s = 1
+      while s <= #line do
+        local ms, me, m = line:find(CHIP_PAT, s)
+        if not ms then break end
+        pcall(vim.api.nvim_buf_set_extmark, bufnr, CHIP_NS, row, ms - 1, {
+          end_col = me, hl_group = chip_hl_for(m:upper()), ephemeral = true,
+        })
+        s = me + 1
+      end
+    end,
+  })
+end
+
 -- ─── statusline chip (for user.starship) ──────────────────────────────────
 -- Returns a segment table {text, fg, bg, gui} or nil. Cheap: only reads the
 -- in-memory cache + branch parse (no HTTP). When the user opens a ticket the
@@ -884,11 +1187,22 @@ function M.statusline_segment(colors)
   local key = M.current_ticket()
   if not key then return nil end
   local hit = _cache.issues[key]
-  local status = hit and (((hit.data.fields or {}).status or {}).name) or nil
-  local text = status and (" " .. key .. " · " .. status .. " ") or (" " .. key .. " ")
+  local status_obj = hit and ((hit.data.fields or {}).status)
+  local sname = status_obj and status_obj.name or nil
+  local text = sname and (" " .. key .. " · " .. sname .. " ") or (" " .. key .. " ")
   local bg = colors and colors.surface or "#313244"
-  if status then
-    local s = status:lower()
+  -- Prefer Jira's statusCategory color when we have the object; fall back
+  -- to a name heuristic for legacy/uncached cases.
+  local cat = status_obj and ((status_obj.statusCategory or {}).colorName)
+  if cat then
+    cat = cat:lower()
+    if cat == "green" then bg = colors and colors.green or "#a6e3a1"
+    elseif cat == "yellow" then bg = colors and colors.sapphire or "#74c7ec"
+    elseif cat == "blue-gray" or cat == "medium-gray" then bg = colors and colors.surface or "#313244"
+    elseif cat:find("red") then bg = colors and colors.red or "#f38ba8"
+    end
+  elseif sname then
+    local s = sname:lower()
     if s:find("done") or s:find("closed") or s:find("resolved") then bg = colors and colors.green or "#a6e3a1"
     elseif s:find("progress") or s:find("review") or s:find("test") then bg = colors and colors.sapphire or "#74c7ec"
     elseif s:find("block") or s:find("hold") then bg = colors and colors.red or "#f38ba8"
@@ -901,6 +1215,7 @@ end
 -- ─── setup ────────────────────────────────────────────────────────────────
 function M.setup()
   load_cache()
+  M._setup_chip_decoration()
 
   vim.api.nvim_create_user_command("JiraIssue",
     function(a) M.show_issue(a.args ~= "" and a.args or nil) end,
@@ -952,6 +1267,13 @@ function M.setup()
     function(a) M.delete_filter(a.args) end,
     { nargs = 1, complete = function() return vim.tbl_keys(_cache.filters or {}) end,
       desc = "Delete a saved filter" })
+
+  vim.api.nvim_create_user_command("JiraCreate",
+    function(a) M.create_flow(a.args ~= "" and a.args or nil) end,
+    { nargs = "?", desc = "Create a new issue (optionally pre-pick project KEY)" })
+  vim.api.nvim_create_user_command("JiraAssign",
+    function(a) M.prompt_assignee(a.args ~= "" and a.args or nil) end,
+    { nargs = "?", desc = "Assign an issue (KEY or current branch)" })
 end
 
 return M

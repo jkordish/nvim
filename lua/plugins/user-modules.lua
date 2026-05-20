@@ -146,10 +146,15 @@ return {
             if n and n ~= "" then require("user.jira").save_filter(n) end
           end)
         end, desc = "Jira: save last search as filter" },
+      { "<leader>jn", function() require("user.jira").create_flow() end,    desc = "Jira: new issue (composer)" },
+      { "<leader>ja", function() require("user.jira").prompt_assignee() end, desc = "Jira: assign issue" },
 
-      { "<leader>Cs", function() require("user.confluence").show_search() end, desc = "Confluence: search" },
-      { "<leader>Cp", function() require("user.confluence").show_page() end,   desc = "Confluence: open page (id/url)" },
-      { "<leader>Cr", function() require("user.confluence").show_recent() end, desc = "Confluence: recent pages" },
+      { "<leader>Cs", function() require("user.confluence").show_search() end,       desc = "Confluence: search" },
+      { "<leader>Cp", function() require("user.confluence").show_page() end,         desc = "Confluence: open page (id/url)" },
+      { "<leader>Cr", function() require("user.confluence").show_recent() end,       desc = "Confluence: recent pages (yours)" },
+      { "<leader>CR", function() require("user.confluence").show_recent_edits() end, desc = "Confluence: recently modified (wiki)" },
+      { "<leader>CI", function() require("user.confluence").insert_ref("recent") end, desc = "Confluence: insert page ref (recent)" },
+      { "<leader>CS", function() require("user.confluence").insert_ref("search") end, desc = "Confluence: insert page ref (search)" },
 
       -- ═════ COCKPIT (<leader>!) ═════
       { "<leader>!!", function() require("user.cockpit").toggle() end, desc = "Cockpit toggle" },

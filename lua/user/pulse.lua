@@ -21,18 +21,19 @@ function M.flash(bufnr)
     priority = 200,
   })
 
-  local step = 0
-  local interval = math.floor(DURATION / STEPS)
+  -- One-shot timer. (Previously this was a repeating interval timer whose
+  -- C-side ticks queued multiple scheduled callbacks before the first one
+  -- ran — every later callback then tried to close an already-closing
+  -- handle, spamming "handle is already closing". Since the per-step body
+  -- did nothing visible, one-shot at DURATION is functionally identical.)
   local timer = vim.uv.new_timer()
-  timer:start(interval, interval, vim.schedule_wrap(function()
-    step = step + 1
-    -- Each step lightens the bg toward base by blending — easiest is to
-    -- just keep it the same color and clear at the end. Smooth fade would
-    -- require multiple hl_groups; the abrupt clear feels fine for ~300ms.
-    if step >= STEPS then
-      pcall(vim.api.nvim_buf_del_extmark, bufnr, NS, id)
-      timer:stop(); timer:close()
-    end
+  local closed = false
+  timer:start(DURATION, 0, vim.schedule_wrap(function()
+    if closed then return end
+    closed = true
+    pcall(vim.api.nvim_buf_del_extmark, bufnr, NS, id)
+    pcall(function() timer:stop() end)
+    pcall(function() if not timer:is_closing() then timer:close() end end)
   end))
 end
 
