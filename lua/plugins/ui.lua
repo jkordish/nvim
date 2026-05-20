@@ -169,6 +169,14 @@ return {
         color = { fg = colors.sapphire, gui = "bold" },
       }
 
+      -- user.warnings LED panel (MOD ERR JOB GIT NET indicators)
+      local user_warnings = {
+        function()
+          local ok, w = pcall(require, "user.warnings")
+          return ok and w.statusline() or ""
+        end,
+      }
+
       -- Pomodoro timer (epwalsh/pomo.nvim)
       local pomo_timer = {
         function()
@@ -204,25 +212,29 @@ return {
         color = { fg = colors.mauve },
       }
 
+      -- ─── Starship-style left/right pre-composed segments ───────────────
+      local starship_left  = { function() return require("user.starship").left()  end }
+      local starship_right = { function() return require("user.starship").right() end }
+
       return {
         options = {
           theme = "catppuccin",
           globalstatus = true,
-          component_separators = { left = "│", right = "│" },
-          section_separators = { left = "", right = "" },
+          -- Powerline-style segment separators (the wedge glyphs)
+          component_separators = { left = "", right = "" },
+          section_separators   = { left = "", right = "" },
           disabled_filetypes = {
-            statusline = { "dashboard", "alpha", "starter" },
-            winbar = { "dashboard", "alpha", "starter", "neo-tree", "Trouble", "trouble" },
+            statusline = { "dashboard", "alpha", "starter", "snacks_dashboard" },
+            winbar = { "dashboard", "alpha", "starter", "neo-tree", "Trouble", "trouble", "snacks_dashboard" },
           },
-          refresh = { statusline = 100 },
+          refresh = { statusline = 200 },
         },
         sections = {
+          -- A: mode (powerline wedge into B)
           lualine_a = { { "mode", fmt = function(s) return " " .. s end } },
-          lualine_b = {
-            { "branch", icon = "" },
-            { "diff", symbols = { added = " ", modified = " ", removed = " " },
-              diff_color = { added = { fg = colors.green }, modified = { fg = colors.yellow }, removed = { fg = colors.red } } },
-          },
+          -- B: starship-style left chain (user@host  cwd  branch + ahead/behind  diff stats)
+          lualine_b = { starship_left },
+          -- C: file-level info — diagnostics, filename, macro, search, noice
           lualine_c = {
             { "diagnostics",
               symbols = { error = " ", warn = " ", info = " ", hint = "󰌵 " },
@@ -236,7 +248,9 @@ return {
             search,
             { function() local ok, n = pcall(require, "noice"); return ok and n.api.status.command.has() and n.api.status.command.get() or "" end },
           },
+          -- X: live indicators (warnings, jobs, pomo, overseer, autoformat, copilot, lsp, ts, indent)
           lualine_x = {
+            user_warnings,
             user_jobs,
             pomo_timer,
             overseer_tasks,
@@ -244,17 +258,14 @@ return {
             copilot,
             lsp,
             treesitter,
-            filesize,
             indent,
-            { "encoding", color = { fg = colors.overlay1 } },
-            { "fileformat", symbols = { unix = "", dos = "", mac = "" }, color = { fg = colors.overlay1 } },
           },
-          lualine_y = {
+          -- Y: starship-style right chain (lang version + venv  docker  k8s  aws  battery  time)
+          lualine_y = { starship_right },
+          -- Z: progress + location
+          lualine_z = {
             { "progress", separator = " ", padding = { left = 1, right = 0 } },
             { "location", padding = { left = 0, right = 1 } },
-          },
-          lualine_z = {
-            { function() return " " .. os.date("%R") end },
           },
         },
         extensions = { "neo-tree", "lazy", "trouble", "mason", "quickfix", "fugitive", "nvim-dap-ui", "aerial" },

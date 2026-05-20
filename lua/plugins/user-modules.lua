@@ -27,6 +27,15 @@ return {
       require("user.explain").setup()
       require("user.timetravel").setup()
       require("user.macroreg").setup()
+      require("user.compass").setup()
+      require("user.radar").setup()
+      require("user.throttle").setup()
+      require("user.checklist").setup()
+      require("user.blackbox").setup()
+      require("user.warnings").setup()
+      require("user.eject").setup()
+      require("user.cockpit").setup()
+      require("user.starship").setup()
     end,
     keys = {
       -- Yank ring (normal mode only — visual <leader>p is paste-without-yank)
@@ -81,6 +90,15 @@ return {
             if name and name ~= "" then require("user.macroreg").save_macro(name, "q") end
           end)
         end, desc = "Saved macros: save reg q" },
+      -- ─── COCKPIT ─────────────────────────────────────────
+      { "<leader>!!", function() require("user.cockpit").toggle() end, desc = "Cockpit: engage/disengage HUD" },
+      { "<leader>!c", function() require("user.compass").toggle() end, desc = "Compass" },
+      { "<leader>!r", function() require("user.radar").toggle() end, desc = "Radar" },
+      { "<leader>!t", function() require("user.throttle").open() end, desc = "Throttle: action launcher" },
+      { "<F1>",       function() require("user.throttle").open() end, desc = "Throttle: action launcher", mode = { "n", "i" } },
+      { "<leader>!p", function() require("user.checklist").run() end, desc = "Pre-flight checklist" },
+      { "<leader>!b", function() require("user.blackbox").show() end, desc = "Black box: timeline" },
+      { "<leader>!e", function() require("user.eject").go() end, desc = "Eject: panic reset" },
     },
   },
 }

@@ -36,6 +36,7 @@ local KIND = {
 
 local function flatten(symbols, out, depth, last_at_depth)
   out = out or {}
+  depth = depth or 0
   last_at_depth = last_at_depth or {}
   for i, sym in ipairs(symbols) do
     local is_last = (i == #symbols)
