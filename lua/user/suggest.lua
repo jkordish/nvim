@@ -46,30 +46,123 @@ local function git_state(cwd)
   return _git_cache.in_git, _git_cache.dirty
 end
 
+-- ─── extra detectors used by some actions ────────────────────────────────
+local function find_test_pair(name, ft)
+  -- For a given source file, look up the obvious test counterpart.
+  if name == "" then return nil end
+  local dir  = vim.fn.fnamemodify(name, ":h")
+  local base = vim.fn.fnamemodify(name, ":t:r")
+  local ext  = vim.fn.fnamemodify(name, ":e")
+  local candidates = {}
+  if base:match("_test$") or base:match("%.test$") or base:match("%.spec$") then
+    -- We're in a test file — point at the implementation
+    local stem = base:gsub("_test$", ""):gsub("%.test$", ""):gsub("%.spec$", "")
+    table.insert(candidates, dir .. "/" .. stem .. "." .. ext)
+    table.insert(candidates, dir:gsub("/tests?$", "/src") .. "/" .. stem .. "." .. ext)
+  else
+    -- Source file — find the test
+    table.insert(candidates, dir .. "/" .. base .. "_test." .. ext)         -- go
+    table.insert(candidates, dir .. "/" .. base .. ".test." .. ext)         -- js/ts
+    table.insert(candidates, dir .. "/" .. base .. ".spec." .. ext)         -- ruby/some js
+    table.insert(candidates, dir .. "/test_" .. base .. "." .. ext)         -- python convention
+    table.insert(candidates, dir:gsub("/src", "/tests") .. "/test_" .. base .. "." .. ext)
+    table.insert(candidates, dir:gsub("/src", "/test") .. "/" .. base .. "." .. ext)
+  end
+  for _, c in ipairs(candidates) do
+    if vim.uv.fs_stat(c) then return c end
+  end
+end
+
+local function find_readme(cwd)
+  for _, n in ipairs({ "README.md", "Readme.md", "readme.md", "README.rst", "README.txt", "README" }) do
+    if vim.uv.fs_stat(cwd .. "/" .. n) then return cwd .. "/" .. n end
+  end
+end
+
+local function find_env_file(cwd)
+  for _, n in ipairs({ ".env", ".env.local", ".envrc" }) do
+    if vim.uv.fs_stat(cwd .. "/" .. n) then return cwd .. "/" .. n end
+  end
+end
+
+local function url_under_cursor()
+  local line = vim.api.nvim_get_current_line()
+  local col = vim.api.nvim_win_get_cursor(0)[2]
+  -- Walk outward from cursor to find http(s) URL containing it
+  local s, e = 1, #line
+  while s <= e do
+    local match_s, match_e = line:find("https?://[%w_%-./?#&=%%~+:!,;@$()*]+", s)
+    if not match_s then return nil end
+    if match_s <= col + 1 and match_e >= col then return line:sub(match_s, match_e) end
+    s = match_e + 1
+  end
+end
+
+local function last_other_file()
+  -- Most-recently-used buffer that isn't the current one (top of jumplist isn't quite right).
+  local cur = vim.api.nvim_get_current_buf()
+  local best, best_mt = nil, 0
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if b ~= cur and vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buflisted then
+      local name = vim.api.nvim_buf_get_name(b)
+      if name ~= "" then
+        local stat = vim.uv.fs_stat(name)
+        local mt = stat and stat.mtime.sec or 0
+        if mt > best_mt then best, best_mt = b, mt end
+      end
+    end
+  end
+  return best
+end
+
+local function has_workspace_snapshot(cwd)
+  local snap = vim.fn.stdpath("state") .. "/workspaces/" .. cwd:gsub("/", "%%") .. ".json"
+  return vim.uv.fs_stat(snap) ~= nil
+end
+
+local function pomo_active()
+  local ok, pomo = pcall(require, "pomo")
+  if not ok then return false end
+  local t = pomo.get_first_to_finish()
+  return t ~= nil
+end
+
 local function ctx()
   local bufnr = vim.api.nvim_get_current_buf()
   local diags = vim.diagnostic.get(bufnr)
   local cwd = vim.fn.getcwd()
   local in_git, dirty = git_state(cwd)
+  local name = vim.api.nvim_buf_get_name(bufnr)
   return {
-    bufnr      = bufnr,
-    ft         = vim.bo[bufnr].filetype,
-    name       = vim.api.nvim_buf_get_name(bufnr),
-    short_name = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":t"),
-    modified   = vim.bo[bufnr].modified,
-    diags      = diags,
-    err_count  = #vim.tbl_filter(function(d) return d.severity == 1 end, diags),
-    hour       = tonumber(os.date("%H")),
-    line       = vim.api.nvim_win_get_cursor(0)[1],
-    cwd        = cwd,
-    in_git     = in_git,
-    git_dirty  = dirty,
+    bufnr        = bufnr,
+    ft           = vim.bo[bufnr].filetype,
+    name         = name,
+    short_name   = vim.fn.fnamemodify(name, ":t"),
+    modified     = vim.bo[bufnr].modified,
+    diags        = diags,
+    err_count    = #vim.tbl_filter(function(d) return d.severity == 1 end, diags),
+    hour         = tonumber(os.date("%H")),
+    line         = vim.api.nvim_win_get_cursor(0)[1],
+    cwd          = cwd,
+    in_git       = in_git,
+    git_dirty    = dirty,
+    -- enriched signals
+    test_pair    = (name ~= "" and find_test_pair(name, vim.bo[bufnr].filetype)) or nil,
+    readme       = find_readme(cwd),
+    env_file     = find_env_file(cwd),
+    cursor_url   = url_under_cursor(),
+    last_other   = last_other_file(),
+    has_session  = has_workspace_snapshot(cwd),
+    pomo_active  = pomo_active(),
   }
 end
 
 -- A short string identifying the situation. Same situation = same fingerprint.
+-- Project name is the leading segment so learning stays project-scoped:
+-- a `fix → commit` sequence in repo A doesn't bleed into repo B's suggestions.
 local function fingerprint(c)
   return table.concat({
+    project_name(c.cwd),
     c.err_count > 0 and "E" or "_",
     c.modified  and "M" or "_",
     c.in_git and ((c.git_dirty > 0) and "D" or "C") or "_",
@@ -217,27 +310,240 @@ local ACTIONS = {
     label = function() return "write today's journal entry" end,
     run = function() require("user.homunculus").wake() end,
   },
+
+  -- ─── new wave: enriched-context actions ─────────────────────────────────
+  {
+    id = "open_test_pair",
+    when = function(c) return c.test_pair and 58 or nil end,
+    label = function(c)
+      local is_test = c.short_name:match("_test") or c.short_name:match("%.test") or c.short_name:match("%.spec") or c.short_name:match("^test_")
+      return (is_test and "jump to implementation · " or "open paired test · ") .. vim.fn.fnamemodify(c.test_pair, ":t")
+    end,
+    run = function(c) vim.cmd("edit " .. vim.fn.fnameescape(c.test_pair)) end,
+  },
+  {
+    id = "swap_other",
+    when = function(c) return c.last_other and 32 or nil end,
+    label = function(c) return "switch to " .. vim.fn.fnamemodify(vim.api.nvim_buf_get_name(c.last_other), ":t") end,
+    run = function(c) vim.cmd("buffer " .. c.last_other) end,
+  },
+  {
+    id = "open_readme",
+    when = function(c) return c.readme and (c.short_name == "" or c.short_name:match("^README") == nil) and 22 or nil end,
+    label = function() return "open project README" end,
+    run = function(c) vim.cmd("edit " .. vim.fn.fnameescape(c.readme)) end,
+  },
+  {
+    id = "open_env",
+    when = function(c) return c.env_file and 18 or nil end,
+    label = function(c) return "edit " .. vim.fn.fnamemodify(c.env_file, ":t") end,
+    run = function(c) vim.cmd("edit " .. vim.fn.fnameescape(c.env_file)) end,
+  },
+  {
+    id = "open_url",
+    when = function(c) return c.cursor_url and 80 or nil end,
+    label = function(c) return "open " .. c.cursor_url:sub(1, 50) .. " in browser" end,
+    run = function(c) vim.ui.open(c.cursor_url) end,
+  },
+  {
+    id = "restore_session",
+    when = function(c)
+      -- Only at start of a session (no other buffers loaded yet, line 1 col 0, empty buf)
+      local n = 0
+      for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buflisted then n = n + 1 end
+      end
+      return c.has_session and n <= 1 and 92 or nil
+    end,
+    label = function() return "restore last session here" end,
+    run = function() require("user.workspace").load() end,
+  },
+  {
+    id = "focus_block",
+    when = function(c) return not c.pomo_active and 18 or nil end,
+    label = function() return "start a 25-min focus block" end,
+    run = function() pcall(vim.cmd, "TimerStart 25m focus") end,
+  },
+  {
+    id = "browse_todos",
+    when = function() return 24 end,
+    label = function() return "browse project TODOs" end,
+    run = function() pcall(vim.cmd, "TodoTelescope") end,
+  },
+  {
+    id = "format_buffer",
+    when = function(c) return c.modified and 30 or nil end,
+    label = function() return "format this buffer" end,
+    run = function() pcall(vim.lsp.buf.format) end,
+  },
+  {
+    id = "code_action",
+    when = function(c) return c.line and 28 or nil end,
+    label = function() return "show code actions here" end,
+    run = function() pcall(vim.lsp.buf.code_action) end,
+  },
+  {
+    id = "rest_send",
+    when = function(c) return (c.ft == "http" or c.ft == "rest") and 80 or nil end,
+    label = function() return "send this REST request" end,
+    run = function() pcall(function() require("kulala").run() end) end,
+  },
+  {
+    id = "yank_ring",
+    when = function() return 22 end,
+    label = function() return "browse yank ring" end,
+    run = function() require("user.yankring").pick() end,
+  },
 }
 
--- ─── ranking with learning ─────────────────────────────────────────────────
+-- ─── per-project actions (.suggest.lua) ───────────────────────────────────
+-- A project can drop a file at its root that returns an array of action
+-- specs in the same shape as the catalog. They're merged in at rank time.
+-- Re-read on mtime change. Tied to cwd, so switching projects swaps them.
+local _project = { cwd = nil, mtime = 0, path = nil, actions = {} }
+
+local function find_project_root(cwd)
+  local dir = cwd
+  for _ = 1, 8 do
+    if vim.uv.fs_stat(dir .. "/.git") or vim.uv.fs_stat(dir .. "/.suggest.lua") then return dir end
+    local parent = vim.fn.fnamemodify(dir, ":h")
+    if parent == dir then return nil end
+    dir = parent
+  end
+  return cwd
+end
+
+local function project_name(cwd)
+  local root = find_project_root(cwd) or cwd
+  return vim.fn.fnamemodify(root, ":t")
+end
+
+local function validate_action(entry, src)
+  if type(entry) ~= "table" then return false, "not a table" end
+  if type(entry.id) ~= "string" or entry.id == "" then return false, "missing id" end
+  if type(entry.run) ~= "function" then return false, "missing run function" end
+  if entry.when and type(entry.when) ~= "function" then return false, "when must be function" end
+  if entry.label and type(entry.label) ~= "function" and type(entry.label) ~= "string" then return false, "label must be string or function" end
+  return true
+end
+
+local function load_project_actions(cwd)
+  local root = find_project_root(cwd)
+  if not root then return {} end
+  local path = root .. "/.suggest.lua"
+  local stat = vim.uv.fs_stat(path)
+  if not stat then
+    _project = { cwd = cwd, mtime = 0, path = nil, actions = {} }
+    return {}
+  end
+  -- Cache hit
+  if _project.cwd == cwd and _project.path == path and _project.mtime == stat.mtime.sec then
+    return _project.actions
+  end
+  -- Reload
+  local ok, result = pcall(dofile, path)
+  if not ok then
+    pcall(function()
+      require("user.brand").notify(".suggest.lua failed: " .. tostring(result), vim.log.levels.ERROR, { title = "suggest" })
+    end)
+    _project = { cwd = cwd, mtime = stat.mtime.sec, path = path, actions = {} }
+    return {}
+  end
+  if type(result) ~= "table" then
+    pcall(function()
+      require("user.brand").notify(".suggest.lua must return a table", vim.log.levels.WARN, { title = "suggest" })
+    end)
+    _project = { cwd = cwd, mtime = stat.mtime.sec, path = path, actions = {} }
+    return {}
+  end
+  -- Validate each entry; namespace IDs with "proj." so they don't collide.
+  local valid = {}
+  for _, entry in ipairs(result) do
+    local ok2, err = validate_action(entry)
+    if ok2 then
+      local copy = vim.tbl_deep_extend("force", {}, entry)
+      copy.id = "proj." .. entry.id           -- namespace so learning state stays distinct
+      copy._is_project = true
+      -- Default `when` if not supplied: always show, low priority
+      if not copy.when then copy.when = function() return 20 end end
+      -- Default label if string
+      if type(copy.label) == "string" then
+        local lbl = copy.label
+        copy.label = function() return lbl end
+      elseif not copy.label then
+        copy.label = function() return entry.id end
+      end
+      table.insert(valid, copy)
+    else
+      pcall(function()
+        require("user.brand").notify((".suggest.lua entry skipped (id=%s): %s"):format(tostring(entry.id), err),
+          vim.log.levels.WARN, { title = "suggest" })
+      end)
+    end
+  end
+  _project = { cwd = cwd, mtime = stat.mtime.sec, path = path, actions = valid }
+  return valid
+end
+
+-- ─── ranking with learning + playbooks ────────────────────────────────────
+-- Look up the strongest next-step learned from sequences. If user picked
+-- action X in the past and within 2 minutes consistently picked Y, surface
+-- Y as the "next" hint after X is highlighted as suggestion.
+local function predicted_next_for(action_id)
+  local trans = state.sequences[action_id]
+  if not trans then return nil, 0 end
+  local best, best_count = nil, 0
+  for next_id, count in pairs(trans) do
+    if count > best_count then best, best_count = next_id, count end
+  end
+  -- Only surface if confidence is meaningful (≥3 historical occurrences)
+  if best and best_count >= 3 then return best, best_count end
+end
+
+-- Look up label for an action id (for hint rendering)
+local function action_label(id, c)
+  for _, a in ipairs(ACTIONS) do
+    if a.id == id then
+      local ok, label = pcall(a.label, c)
+      if ok then return label end
+    end
+  end
+  return id
+end
+
 local function rank(c)
   local fp = fingerprint(c)
   local out = {}
-  for _, a in ipairs(ACTIONS) do
-    local base = a.when(c)
-    if base then
-      local label = a.label(c)
-      if label and label ~= "" then
+  -- Built-in catalog + per-project additions, evaluated together.
+  local project_actions = load_project_actions(c.cwd)
+  local all = {}
+  for _, a in ipairs(ACTIONS) do table.insert(all, a) end
+  for _, a in ipairs(project_actions) do table.insert(all, a) end
+
+  for _, a in ipairs(all) do
+    local ok_when, base = pcall(a.when, c)
+    if ok_when and base then
+      local ok_label, label = pcall(a.label, c)
+      if ok_label and label and label ~= "" then
         local p = base + recency_bonus(a.id)
-        -- learning: this fingerprint historically picked this action
+        -- Project-scoped: ctx_picks is keyed by full fingerprint including project name
         local ctx_count = (state.ctx_picks[fp] or {})[a.id] or 0
         p = p + math.min(20, ctx_count * 4)
-        -- learning: short-window sequence — did this action often follow our last pick?
         if last_pick.id and (os.time() - last_pick.ts) < 120 then
           local seq_count = (state.sequences[last_pick.id] or {})[a.id] or 0
           p = p + math.min(18, seq_count * 3)
         end
-        table.insert(out, { action = a, label = label, priority = p, learned = (ctx_count > 0) })
+        -- Project actions get a small visibility boost so they don't drown
+        if a._is_project then p = p + 5 end
+        local next_id, next_count = predicted_next_for(a.id)
+        local next_hint
+        if next_id then next_hint = { id = next_id, count = next_count } end
+        table.insert(out, {
+          action = a, label = label, priority = p,
+          learned = (ctx_count > 0),
+          next_hint = next_hint,
+          is_project = a._is_project or false,
+        })
       end
     end
   end
@@ -274,10 +580,17 @@ local function render(c, items)
   panel.items = items
   vim.api.nvim_buf_clear_namespace(panel.buf, NS, 0, -1)
 
+  -- The top item's predicted-next gets a hint line directly under it.
   local lines = { "" }
   for i, it in ipairs(items) do
     local marker = it.learned and "●" or " "
-    table.insert(lines, string.format("    %d  %s  %s", i, marker, it.label))
+    local origin = it.is_project and "▸ " or ""
+    table.insert(lines, string.format("    %d  %s  %s%s", i, marker, origin, it.label))
+    -- Only show the playbook hint on the #1 ranked suggestion to avoid noise
+    if i == 1 and it.next_hint then
+      local hint_label = action_label(it.next_hint.id, c)
+      table.insert(lines, string.format("         ↳ then usually: %s   (×%d)", hint_label, it.next_hint.count))
+    end
   end
   table.insert(lines, "")
   table.insert(lines, "    " .. string.rep("─", 44))
@@ -285,29 +598,46 @@ local function render(c, items)
   if c.ft ~= "" then sub = sub .. "  ·  " .. c.ft end
   if c.in_git and c.git_dirty > 0 then sub = sub .. "  ·  " .. c.git_dirty .. " dirty" end
   if c.err_count > 0 then sub = sub .. "  ·  " .. c.err_count .. " err" end
+  if c.pomo_active then sub = sub .. "  ·   in focus" end
   table.insert(lines, "    " .. sub)
   table.insert(lines, "")
-  table.insert(lines, "    " .. "● = learned in this context     ? = show all     q = close")
+  table.insert(lines, "    " .. "● = learned     ↳ = predicted next     ? = show all     q = close")
 
   vim.bo[panel.buf].modifiable = true
   vim.api.nvim_buf_set_lines(panel.buf, 0, -1, false, lines)
   vim.bo[panel.buf].modifiable = false
 
-  -- Highlights: number key in accent, learned marker, subtitle muted
-  for i = 1, #items do
-    pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, i, 4, {
-      end_col = 5, hl_group = "BrandAccent",
-    })
-    if items[i].learned then
-      pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, i, 7, {
-        end_col = 8, hl_group = "BrandOk",
+  -- Walk the rendered lines, highlighting the number key, learned marker,
+  -- and predicted-next hint. We re-scan with patterns so the offsets stay
+  -- correct even when the playbook hint inserts an extra line.
+  for r, line in ipairs(lines) do
+    local row = r - 1  -- 0-indexed for extmarks
+    -- "    N  ●  ..." → highlight the digit + the marker
+    local n_start = line:find("^%s+(%d)%s")
+    if n_start then
+      local digit_col = #line:match("^(%s+)") -- count leading spaces
+      pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, digit_col, {
+        end_col = digit_col + 1, hl_group = "BrandAccent",
+      })
+      local marker_col = line:find("●", 1, true)
+      if marker_col then
+        pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, marker_col - 1, {
+          end_col = marker_col + 2, hl_group = "BrandOk",   -- ● is multi-byte
+        })
+      end
+    end
+    -- "         ↳ then usually: ..."  → dim the whole line
+    if line:find("↳", 1, true) then
+      pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, 0, {
+        end_line = row + 1, hl_group = "BrandSubtext",
       })
     end
-  end
-  -- Divider + subtitle + footer
-  for r = #items + 2, #items + 4 do
-    pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, r, 0,
-      { end_line = r + 1, hl_group = "BrandMuted" })
+    -- Divider and footer (rule lines, file/ctx subtitle, legend)
+    if line:find("^%s+─") or line:find("●%s*=%s*learned") or line:find("^%s+[%a%.]+%s+·") then
+      pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, 0, {
+        end_line = row + 1, hl_group = "BrandMuted",
+      })
+    end
   end
 
   -- Resize window to match content
@@ -446,11 +776,127 @@ function M.forget()
   require("user.brand").notify("learning state reset", nil, { title = "suggest" })
 end
 
+local PROJECT_TEMPLATE = [[
+-- .suggest.lua  ·  per-project actions for nvim's Suggest panel
+--
+-- Each action is { id, when(ctx)->priority|nil, label(ctx)->string, run(ctx) }
+-- - id:    unique short string (gets prefixed with "proj." internally)
+-- - when:  return a number (priority) to surface, or nil to hide
+-- - label: text shown in the panel (or a function returning text)
+-- - run:   what happens when the user presses its number
+--
+-- ctx exposes: bufnr, ft, name, short_name, modified, diags, err_count, hour,
+--   line, cwd, in_git, git_dirty, readme, env_file, cursor_url, last_other,
+--   has_session, pomo_active
+
+return {
+  {
+    id    = "deploy",
+    label = "deploy to staging",
+    when  = function(c) return c.in_git and c.git_dirty == 0 and 65 or nil end,
+    run   = function() vim.cmd("Job deploy  make deploy-staging") end,
+  },
+  {
+    id    = "e2e",
+    label = "run e2e suite",
+    when  = function() return 45 end,
+    run   = function() vim.cmd("Job e2e  npm run e2e") end,
+  },
+  -- Add as many as you want.
+}
+]]
+
+function M.project_info()
+  load_project_actions(vim.fn.getcwd())
+  local lines = { "" }
+  if not _project.path then
+    table.insert(lines, "    no .suggest.lua in this project tree")
+    table.insert(lines, "")
+    table.insert(lines, "    run  :SuggestProjectEdit  to create one")
+  else
+    table.insert(lines, "    " .. _project.path)
+    table.insert(lines, "    last modified " .. os.date("%Y-%m-%d %H:%M", _project.mtime))
+    table.insert(lines, "")
+    if #_project.actions == 0 then
+      table.insert(lines, "    file loaded but has 0 actions")
+    else
+      table.insert(lines, "    " .. #_project.actions .. " project action" .. (#_project.actions == 1 and "" or "s") .. ":")
+      table.insert(lines, "")
+      for _, a in ipairs(_project.actions) do
+        local label = (type(a.label) == "function" and (pcall(a.label) and select(2, pcall(a.label)) or a.id)) or a.id
+        table.insert(lines, string.format("    ▸  %-30s   %s", a.id:gsub("^proj%.", ""), label))
+      end
+    end
+  end
+  table.insert(lines, "")
+  table.insert(lines, "    project: " .. project_name(vim.fn.getcwd()))
+  table.insert(lines, "")
+  require("user.brand").win({
+    title = "project suggestions",
+    width = 70, height = #lines + 2,
+    anchor = "center",
+  })
+  vim.schedule(function()
+    local bufnr = vim.api.nvim_get_current_buf()
+    vim.bo[bufnr].modifiable = true
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.bo[bufnr].modifiable = false
+  end)
+end
+
+function M.project_reload()
+  _project = { cwd = nil, mtime = 0, path = nil, actions = {} }
+  local n = #load_project_actions(vim.fn.getcwd())
+  require("user.brand").notify("project actions reloaded · " .. n .. " loaded", nil, { title = "suggest" })
+end
+
+function M.project_edit()
+  local root = find_project_root(vim.fn.getcwd()) or vim.fn.getcwd()
+  local path = root .. "/.suggest.lua"
+  local exists = vim.uv.fs_stat(path) ~= nil
+  if not exists then
+    local f = io.open(path, "w")
+    if f then f:write(PROJECT_TEMPLATE); f:close() end
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  if not exists then
+    require("user.brand").notify("created " .. path .. " with a template", nil, { title = "suggest" })
+  end
+end
+
+-- ─── public surface for cross-module access (used by user.playbooks) ──────
+function M.find_action(id)
+  for _, a in ipairs(ACTIONS) do
+    if a.id == id then return a end
+  end
+  -- Project actions live in the cache; refresh + scan
+  for _, a in ipairs(load_project_actions(vim.fn.getcwd())) do
+    if a.id == id then return a end
+  end
+end
+
+function M.context() return ctx() end
+function M.sequences() load_state(); return state.sequences end
+
 function M.setup()
   load_state()
-  vim.api.nvim_create_user_command("Suggest",      M.show,   { desc = "Open the contextual suggest panel" })
-  vim.api.nvim_create_user_command("SuggestStats", M.stats,  { desc = "Show what Suggest has learned" })
-  vim.api.nvim_create_user_command("SuggestForget", M.forget, { desc = "Wipe Suggest's learned state" })
+  vim.api.nvim_create_user_command("Suggest",              M.show,            { desc = "Open the contextual suggest panel" })
+  vim.api.nvim_create_user_command("SuggestStats",         M.stats,           { desc = "Show what Suggest has learned" })
+  vim.api.nvim_create_user_command("SuggestForget",        M.forget,          { desc = "Wipe Suggest's learned state" })
+  vim.api.nvim_create_user_command("SuggestProject",       M.project_info,    { desc = "Inspect the .suggest.lua loaded for this project" })
+  vim.api.nvim_create_user_command("SuggestProjectReload", M.project_reload,  { desc = "Force re-read of .suggest.lua" })
+  vim.api.nvim_create_user_command("SuggestProjectEdit",   M.project_edit,    { desc = "Edit (or create) .suggest.lua for this project" })
+
+  -- Re-evaluate project actions when the working directory changes.
+  vim.api.nvim_create_autocmd("DirChanged", {
+    group = vim.api.nvim_create_augroup("user_suggest_dir", { clear = true }),
+    callback = function() M.project_reload_quiet() end,
+  })
+end
+
+function M.project_reload_quiet()
+  _project = { cwd = nil, mtime = 0, path = nil, actions = {} }
+  load_project_actions(vim.fn.getcwd())
 end
 
 return M

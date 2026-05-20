@@ -19,6 +19,7 @@ return {
       -- ─── primary entry points ───
       require("user.suggest").setup()
       require("user.commandeer").setup()
+      require("user.playbooks").setup()
 
       -- ─── daily-driver tools ───
       require("user.yankring").setup()
@@ -69,6 +70,7 @@ return {
     keys = {
       -- ═════ THE HEADLINE ═════
       { "<leader><space>", function() require("user.suggest").show() end, desc = "✦ what should I do next?" },
+      { "<leader>up",      function() require("user.playbooks").show() end, desc = "Playbooks: learned chains" },
 
       -- ═════ DAILY ═════
       { "<leader>p",  function() require("user.yankring").pick() end, mode = "n", desc = "Yank ring" },
