@@ -262,10 +262,25 @@ return {
     opts = {
       options = {
         diagnostics = "nvim_lsp",
-        always_show_bufferline = false,
+        diagnostics_indicator = function(_, _, diag)
+          local icons = { error = " ", warning = " " }
+          local s = (diag.error and icons.error .. diag.error or "")
+                  .. (diag.warning and " " .. icons.warning .. diag.warning or "")
+          return vim.trim(s)
+        end,
+        always_show_bufferline = true,
+        show_buffer_close_icons = true,
+        show_close_icon = false,
+        separator_style = "slant",
+        indicator = { style = "underline" },
+        modified_icon = "●",
+        buffer_close_icon = "󰅖",
         offsets = {
-          { filetype = "neo-tree", text = "Neo-tree", highlight = "Directory", text_align = "left" },
+          { filetype = "neo-tree", text = "  Explorer", highlight = "Directory", text_align = "left", separator = true },
+          { filetype = "Avante",   text = "  Avante",   highlight = "PanelHeading", text_align = "center", separator = true },
+          { filetype = "dbui",     text = "  Database", highlight = "PanelHeading", text_align = "center", separator = true },
         },
+        hover = { enabled = true, delay = 200, reveal = { "close" } },
       },
     },
   },
@@ -295,42 +310,7 @@ return {
     },
   },
 
-  {
-    "goolord/alpha-nvim",
-    event = "VimEnter",
-    opts = function()
-      local dashboard = require("alpha.themes.dashboard")
-      dashboard.section.header.val = {
-        [[                                                     ]],
-        [[  ███╗   ██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗ ]],
-        [[  ████╗  ██║██╔════╝██╔═══██╗██║   ██║██║████╗ ████║ ]],
-        [[  ██╔██╗ ██║█████╗  ██║   ██║██║   ██║██║██╔████╔██║ ]],
-        [[  ██║╚██╗██║██╔══╝  ██║   ██║╚██╗ ██╔╝██║██║╚██╔╝██║ ]],
-        [[  ██║ ╚████║███████╗╚██████╔╝ ╚████╔╝ ██║██║ ╚═╝ ██║ ]],
-        [[  ╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝ ]],
-      }
-      dashboard.section.buttons.val = {
-        dashboard.button("f", "  Find file", "<cmd>Telescope find_files<CR>"),
-        dashboard.button("r", "  Recent files", "<cmd>Telescope oldfiles<CR>"),
-        dashboard.button("g", "  Live grep", "<cmd>Telescope live_grep<CR>"),
-        dashboard.button("n", "  New file", "<cmd>ene <BAR> startinsert<CR>"),
-        dashboard.button("c", "  Config", "<cmd>e $MYVIMRC<CR>"),
-        dashboard.button("l", "󰒲  Lazy", "<cmd>Lazy<CR>"),
-        dashboard.button("q", "  Quit", "<cmd>qa<CR>"),
-      }
-      return dashboard
-    end,
-    config = function(_, dashboard)
-      require("alpha").setup(dashboard.config)
-      vim.api.nvim_create_autocmd("User", {
-        pattern = "LazyVimStarted",
-        callback = function()
-          local stats = require("lazy").stats()
-          local ms = math.floor(stats.startuptime * 100 + 0.5) / 100
-          dashboard.section.footer.val = "⚡ loaded " .. stats.loaded .. "/" .. stats.count .. " plugins in " .. ms .. "ms"
-          pcall(vim.cmd.AlphaRedraw)
-        end,
-      })
-    end,
-  },
+  -- alpha-nvim replaced by snacks.dashboard (configured in extras.lua) — more
+  -- modern, integrates with snacks ecosystem, and picks up recent files /
+  -- sessions / git status as live sections.
 }

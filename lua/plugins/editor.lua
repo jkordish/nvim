@@ -110,6 +110,31 @@ return {
     end,
     opts = {
       provider_selector = function() return { "lsp", "treesitter" } end,
+      fold_virt_text_handler = function(virt_text, lnum, end_lnum, width, truncate)
+        local suffix = ("  󰁂 %d "):format(end_lnum - lnum)
+        local sufWidth = vim.fn.strdisplaywidth(suffix)
+        local target_width = width - sufWidth
+        local cur_width = 0
+        local new_virt = {}
+        for _, chunk in ipairs(virt_text) do
+          local text, hl = chunk[1], chunk[2]
+          local chunkWidth = vim.fn.strdisplaywidth(text)
+          if target_width > cur_width + chunkWidth then
+            table.insert(new_virt, chunk)
+          else
+            text = truncate(text, target_width - cur_width)
+            table.insert(new_virt, { text, hl })
+            chunkWidth = vim.fn.strdisplaywidth(text)
+            if cur_width + chunkWidth < target_width then
+              suffix = suffix .. (" "):rep(target_width - cur_width - chunkWidth)
+            end
+            break
+          end
+          cur_width = cur_width + chunkWidth
+        end
+        table.insert(new_virt, { suffix, "MoreMsg" })
+        return new_virt
+      end,
     },
     keys = {
       { "zR", function() require("ufo").openAllFolds() end, desc = "Open all folds" },
@@ -121,12 +146,34 @@ return {
   {
     "folke/persistence.nvim",
     event = "BufReadPre",
-    opts = {},
+    opts = {
+      options = { "buffers", "curdir", "tabpages", "winsize", "help", "globals", "skiprtp", "folds" },
+    },
     keys = {
       { "<leader>qs", function() require("persistence").load() end, desc = "Restore session" },
       { "<leader>ql", function() require("persistence").load({ last = true }) end, desc = "Restore last session" },
       { "<leader>qd", function() require("persistence").stop() end, desc = "Stop session save" },
     },
+    -- Auto-restore session when nvim is opened in a project dir with no args
+    config = function(_, opts)
+      require("persistence").setup(opts)
+      vim.api.nvim_create_autocmd("VimEnter", {
+        group = vim.api.nvim_create_augroup("user_persistence_autoload", { clear = true }),
+        nested = true,
+        callback = function()
+          if vim.fn.argc(-1) > 0 then return end           -- args supplied: skip
+          if vim.fn.line2byte("$") ~= -1 then return end   -- buffer has content: skip
+          local cwd = vim.fn.getcwd()
+          -- Only auto-restore inside known project roots (have .git or similar)
+          for _, m in ipairs({ ".git", "Cargo.toml", "go.mod", "package.json", "pyproject.toml" }) do
+            if vim.fn.findfile(m, cwd .. ";") ~= "" or vim.fn.finddir(m, cwd .. ";") ~= "" then
+              require("persistence").load()
+              return
+            end
+          end
+        end,
+      })
+    end,
   },
 
   {
@@ -143,8 +190,8 @@ return {
     ft = { "markdown", "Avante", "copilot-chat" },
     opts = {
       file_types = { "markdown", "Avante", "copilot-chat" },
-      latex = { enabled = false },          -- no latex parser installed
-      checkbox = { enabled = true, position = "inline" },
+      latex = { enabled = false },     -- no latex parser installed
+      checkbox = { enabled = true },   -- (older `position` field removed in newer versions)
     },
   },
 }

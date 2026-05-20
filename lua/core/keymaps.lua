@@ -5,7 +5,7 @@ map("n", "<Esc>", "<cmd>nohlsearch<CR>", { desc = "Clear search highlight" })
 map("n", "<leader>w", "<cmd>w<CR>", { desc = "Write" })
 map("n", "<leader>W", "<cmd>wa<CR>", { desc = "Write all" })
 map("n", "<leader>q", "<cmd>confirm q<CR>", { desc = "Quit" })
-map("n", "<leader>Q", "<cmd>qa!<CR>", { desc = "Force quit all" })
+-- <leader>Q is defined later as the smart-quit (asks before discarding unsaved)
 
 -- Better up/down on wrapped lines
 map({ "n", "x" }, "j", "v:count == 0 ? 'gj' : 'j'", { expr = true, silent = true })
@@ -64,3 +64,33 @@ map("n", "<leader>xq", "<cmd>copen<CR>", { desc = "Open quickfix" })
 -- Terminal
 map("t", "<C-/>", "<cmd>close<CR>", { desc = "Hide terminal" })
 map("t", "<Esc><Esc>", "<C-\\><C-n>", { desc = "Terminal normal mode" })
+
+-- VSCode-style command palette
+map("n", "<C-S-p>", function() require("telescope.builtin").commands() end, { desc = "Command palette" })
+map("n", "<D-S-p>", function() require("telescope.builtin").commands() end, { desc = "Command palette" })
+
+-- Quick shell runner — prompts for a command, runs it in a floating term
+map("n", "<leader>!", function()
+  vim.ui.input({ prompt = "shell> " }, function(cmd)
+    if not cmd or cmd == "" then return end
+    require("toggleterm.terminal").Terminal:new({ cmd = cmd, direction = "float", close_on_exit = false }):toggle()
+  end)
+end, { desc = "Quick shell command" })
+
+-- Smart quit — confirm if there are modified buffers anywhere
+map("n", "<leader>Q", function()
+  local modified = {}
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].modified then
+      table.insert(modified, vim.api.nvim_buf_get_name(b))
+    end
+  end
+  if #modified == 0 then
+    vim.cmd("qa")
+  else
+    local list = table.concat(vim.tbl_map(function(f) return "  " .. vim.fn.fnamemodify(f, ":~:.") end, modified), "\n")
+    local choice = vim.fn.confirm(("Unsaved buffers:\n%s\n\nWhat to do?"):format(list), "&Save all\n&Discard\n&Cancel", 3)
+    if choice == 1 then vim.cmd("wa | qa")
+    elseif choice == 2 then vim.cmd("qa!") end
+  end
+end, { desc = "Smart quit all" })

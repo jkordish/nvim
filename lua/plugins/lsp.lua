@@ -122,6 +122,16 @@ return {
             group = grp, buffer = bufnr, callback = vim.lsp.buf.clear_references,
           })
         end
+
+        -- CodeLens: refresh on read/cursor-hold, render run/debug buttons inline
+        if client:supports_method("textDocument/codeLens") then
+          nmap("<leader>cl", vim.lsp.codelens.run, "Run codelens action")
+          nmap("<leader>cL", vim.lsp.codelens.refresh, "Refresh codelens")
+          local grp = vim.api.nvim_create_augroup("user_lsp_codelens_" .. bufnr, { clear = true })
+          vim.api.nvim_create_autocmd({ "BufEnter", "CursorHold", "InsertLeave" }, {
+            group = grp, buffer = bufnr, callback = function() vim.lsp.codelens.refresh({ bufnr = bufnr }) end,
+          })
+        end
       end
 
       vim.api.nvim_create_autocmd("LspAttach", {

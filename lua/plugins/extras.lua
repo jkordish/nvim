@@ -22,12 +22,62 @@ return {
       lazygit = { enabled = true },
       terminal = { enabled = true },
       zen = { enabled = true, toggles = { dim = true, git_signs = false, mini_diff_signs = false } },
-      dim = { enabled = true },
+      dim = {
+        enabled = true,
+        scope = { min_size = 5, max_size = 20, siblings = true },
+      },
       input = { enabled = false },     -- dressing.nvim handles vim.ui.input
-      image = { enabled = true },      -- snacks does PNG natively via Ghostty kitty protocol
+      image = {
+        enabled = true,                -- PNG inline rendering via Ghostty kitty protocol
+        formats = { "png", "jpg", "jpeg", "gif", "bmp", "webp", "avif", "svg" },
+        doc = { inline = true, max_width = 80, max_height = 40 },
+        convert = { magick = { "-density", "200" } },
+        -- Disable formats that need extra tools we don't have installed:
+        math = { enabled = false },    -- needs tectonic/pdflatex
+        diagram = { enabled = false }, -- mermaid needs mmdc
+        pdf = { enabled = false },     -- needs ghostscript
+      },
       notifier = { enabled = false },  -- using nvim-notify
-      dashboard = { enabled = false }, -- using alpha-nvim
       picker = { enabled = false },    -- using telescope
+      dashboard = {
+        enabled = true,
+        preset = {
+          header = [[
+███╗   ██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗
+████╗  ██║██╔════╝██╔═══██╗██║   ██║██║████╗ ████║
+██╔██╗ ██║█████╗  ██║   ██║██║   ██║██║██╔████╔██║
+██║╚██╗██║██╔══╝  ██║   ██║╚██╗ ██╔╝██║██║╚██╔╝██║
+██║ ╚████║███████╗╚██████╔╝ ╚████╔╝ ██║██║ ╚═╝ ██║
+╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝   banger config]],
+          keys = {
+            { icon = " ", key = "f", desc = "Find file",      action = ":Telescope find_files" },
+            { icon = " ", key = "n", desc = "New file",       action = ":ene | startinsert" },
+            { icon = " ", key = "g", desc = "Live grep",      action = ":Telescope live_grep" },
+            { icon = " ", key = "r", desc = "Recent files",   action = ":Telescope oldfiles" },
+            { icon = " ", key = "p", desc = "Projects",       action = ":Telescope projects" },
+            { icon = " ", key = "s", desc = "Restore session", action = function() require("persistence").load() end },
+            { icon = "󰒲 ", key = "l", desc = "Lazy",           action = ":Lazy" },
+            { icon = " ", key = "m", desc = "Mason",          action = ":Mason" },
+            { icon = " ", key = "c", desc = "Config",         action = ":e $MYVIMRC" },
+            { icon = " ", key = "q", desc = "Quit",           action = ":qa" },
+          },
+        },
+        sections = {
+          { section = "header" },
+          { section = "keys",     gap = 1, padding = 1 },
+          { section = "recent_files", icon = " ", title = "Recent Files",  indent = 2, padding = 1 },
+          { section = "projects",     icon = " ", title = "Projects",       indent = 2, padding = 1 },
+          { pane = 2, icon = " ", title = "Git Status", section = "terminal",
+            enabled = function() return Snacks.git.get_root() ~= nil end,
+            cmd = "git status --short --branch --renames", height = 5, padding = 1, ttl = 5 * 60, indent = 3,
+          },
+          { pane = 2, icon = " ", title = "Recent Branches", section = "terminal",
+            enabled = function() return Snacks.git.get_root() ~= nil end,
+            cmd = "git --no-pager log --pretty=format:'%C(magenta)%h %C(white) %an  %ar%C(yellow)  %s%C(reset)' -5", height = 6, padding = 1, ttl = 5 * 60, indent = 3,
+          },
+          { section = "startup" },
+        },
+      },
     },
     keys = {
       { "<leader>.",  function() Snacks.scratch() end, desc = "Scratch buffer" },

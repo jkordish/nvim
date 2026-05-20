@@ -36,7 +36,18 @@ opt.showmode = false
 opt.cmdheight = 1
 opt.laststatus = 3
 opt.shortmess:append("WcCsI")
-opt.fillchars = { eob = " ", fold = " ", foldopen = "v", foldsep = " ", foldclose = ">" }
+opt.fillchars = {
+  eob = " ",
+  fold = " ",
+  foldopen = "▾",
+  foldsep = "│",
+  foldclose = "▸",
+  diff = "╱",
+  msgsep = "─",
+}
+
+-- Universal rounded borders for every floating window the harness opens.
+opt.winborder = "rounded"
 
 opt.swapfile = false
 opt.backup = false
@@ -72,15 +83,19 @@ vim.g.loaded_node_provider = 0
 -- don't need the noise.
 do
   local orig = vim.deprecate
+  -- Match by prefix (deprecate names sometimes include "<table>" / "()" suffix).
+  local muted_prefixes = {
+    "vim.highlight",
+    "vim.validate",
+    "vim.lsp.buf_get_clients",
+    "vim.lsp.get_buffers_by_client_id",
+    "vim.lsp.set_log_level",
+  }
   ---@diagnostic disable-next-line: duplicate-set-field
   vim.deprecate = function(name, alternative, version, plugin, backtrace)
-    local muted = {
-      ["vim.highlight"] = true,
-      ["vim.validate"] = true,
-      ["vim.lsp.buf_get_clients()"] = true,
-      ["vim.lsp.get_buffers_by_client_id()"] = true,
-    }
-    if muted[name] then return end
+    for _, p in ipairs(muted_prefixes) do
+      if type(name) == "string" and name:sub(1, #p) == p then return end
+    end
     return orig(name, alternative, version, plugin, backtrace)
   end
 end
