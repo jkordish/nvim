@@ -21,7 +21,9 @@
 
 A complete Neovim distro tuned to be your **single home in the terminal**. Native LSP for 15+ languages. Two AI surfaces (Copilot inline + Avante chat with Claude). Full git workflow with Magit-style commits, PR review, time-travel, line-by-line blame whispers. Database client, REST client, Kubernetes panel, Jupyter notebooks, Obsidian-style second brain. All running on nvim 0.12 with the modern `vim.lsp.config` API and the maintained `nvim-treesitter` main branch.
 
-On top of that, a **design system** (`lua/user/brand` + `curtain` + `welcome`) and **53 hand-rolled native modules** that turn the editor into something more like a cockpit than a text widget. The whole UI is **mode-reactive**: a single per-mode color (blue NORMAL · green INSERT · mauve VISUAL · red REPLACE · peach COMMAND · teal TERMINAL) drives six surfaces in lockstep — statusline mode capsule, bufferline tab underline, compass HUD chip, cursor block/beam, line number (via modicator), and popup borders (LSP hover/signature, completion menu, telescope). Change mode and six things retune at once.
+On top of that, a **design system** (`lua/user/brand` + `curtain` + `welcome`) and **50+ hand-rolled native modules** that turn the editor into something more like a cockpit than a text widget. The whole UI is **mode-reactive**: a single per-mode color (blue NORMAL · green INSERT · mauve VISUAL · red REPLACE · peach COMMAND · teal TERMINAL) drives six surfaces in lockstep — statusline mode capsule, bufferline tab underline, compass HUD chip, cursor block/beam, line number (via modicator), and popup borders (LSP hover/signature, completion menu, telescope). Change mode and six things retune at once.
+
+A shared **chip vocabulary** (`BrandChipAccent` / `BrandChipSurface` / `BrandChipOk` / `BrandChipWarn` / `BrandChipErr` / `BrandChipInfo`, defined once in `user.brand`) renders the colored capsules you see across every persistent panel: the digit + learned + project chips in the **Suggest** panel, the digit + pin chips in the **Playbooks** panel, the per-row chips in the **Compass HUD**, and the severity chips in the **diagnostic gutter**. One source of truth for color → behavior; change the token, every panel updates.
 
 Three of those modules — **`suggest`**, **`commandeer`**, and **`playbooks`** — are the headline:
 
@@ -52,9 +54,10 @@ If VSCode does it, this does it — faster, in your terminal, on your keymaps. A
 13. [Keymap reference](#keymap-reference)
 14. [The status bar](#the-status-bar)
 15. [The compass HUD](#the-compass-hud)
-16. [Layout / where things live](#layout--where-things-live)
-17. [Customization](#customization)
-18. [Troubleshooting](#troubleshooting)
+16. [Recently shipped](#recently-shipped)
+17. [Layout / where things live](#layout--where-things-live)
+18. [Customization](#customization)
+19. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -375,7 +378,7 @@ You'll use them in that order over weeks. `<leader>` is muscle memory. `<Space><
 ### Real apps living in nvim
 - **Database client** — vim-dadbod-ui (`<leader>D`) — Postgres/MySQL/SQLite/BigQuery side panel
 - **REST client** — kulala (`<leader>Rs`) — `.http` files, response in split
-- **Kubernetes** — kubectl.nvim (`<leader>k`) — Lens-style pods/logs/exec
+- **Kubernetes** — kubectl.nvim (`<leader>k`) — Lens-style pods/logs/exec. First open compiles the bundled Rust client (`make build` via lazy's `build` hook); needs Go + Cargo on PATH
 - **Jupyter** — Quarto + Molten with cell execution and inline plot rendering (opt-in)
 - **Obsidian** — full second-brain (`<leader>nn`, `nt`, `nb`, `ng`)
 - **Pomodoro** — `<leader>np1/2/3`, countdown shows in statusline
@@ -854,6 +857,64 @@ Cut to the essentials. Only segments with *something to say right now* render. T
 
 ---
 
+## Recently shipped
+
+A chronological log of the visual / UX slices that landed in the current arc. New readers can skip; returning ones can scan to see what changed.
+
+### Visual coherence arc
+
+**1. Statusline v2** — `user.starship`, `plugins/ui.lua`
+Anchored the left half with a per-mode capsule (16 sub-modes mapped: blue NORMAL · green INSERT · mauve VISUAL · red REPLACE · peach COMMAND · teal TERMINAL · sapphire PROMPT · yellow SHELL). Lualine refresh bumped 200ms → 100ms so animated chips read as smooth. Dropped lualine_a (mode moved into the chain) so the whole left half is one continuous powerline with no theme-color seam.
+
+**2. Compass HUD v2** — `user.compass`
+Plain-text 1995 box replaced with five rows of Catppuccin-colored chips rendered via `nvim_buf_set_extmark` (statusline `%#hl#` syntax doesn't work in buffer content). Pulls `user.starship._mode_defs` and `user.starship.c` so the mode capsule and color palette stay in sync with the statusline by reference. Auto-resizes per 250ms tick; pressure colors on cpu/ram chips so the HUD visibly heats up under load.
+
+**3. Mode-reactive accent — bufferline + cursor + popups** — `_hook_mode_accent`
+One `ModeChanged` autocmd in `user.starship` retints **15 bufferline highlight groups** (selected tab underline + indicator + diagnostic variants), **7 cursor groups** (Cursor / iCursor / vCursor / rCursor / cCursor / lCursor / TermCursor), and **9 popup-border groups** (`FloatBorder`, `FloatTitle`, blink.cmp menu/doc/signature, telescope borders, `LspSignatureActiveParameter`). Six visible surfaces — statusline + bufferline + compass + cursor + line number + popup borders — all retune in lockstep. Floats that set their own `winhighlight` (compass, brand panels) are insulated.
+
+**4. Animated chips for state changes** — `M.modules.*` in `user.starship`
+- `⠋ N jobs` — braille spinner (12.5fps, anchored on `vim.uv.now()` so all spinners phase-lock)
+- `● REC @q` — pulsing red capsule when recording a macro (500ms period)
+- `✓ saved · file.lua` — save pulse: two-phase fade (bright green → teal) over 1.6s after every `BufWritePost`. Flips red on failed writes.
+- `▶ morning-routine · 2m` — last-fired playbook LED (sapphire running, green ✓ done, red ✗ error). 10-minute TTL.
+- `♥` / `♡` — session heartbeat: 200ms pulse once per minute, anchored on `vim.uv.now() % 60000` so it fires deterministically.
+- `⌨ 2.4k · 47m` — engagement chip: keystrokes today (persisted via `vim.on_key` + debounced writes) + session minutes.
+- `🔥 14d` — writing-streak chip with tiered bg colors (surface 2-6d → yellow 7+ → peach 14+ → mauve 30+). Strict day-after math; gap of 1+ days resets to 1. Hidden at streak ≤ 1.
+
+**5. Diagnostic gutter chips** — `_hook_diag_chips`
+`DiagnosticSign{Error,Warn,Info,Hint}` overridden to chip-style (base fg + severity bg + bold). The gutter icons now render as colored capsule pills instead of fg-only glyphs. Same severity color vocabulary as the statusline `diag` chip and compass diagnostics row.
+
+**6. Suggest panel chip polish + preview-on-hover** — `user.suggest`
+Each row's digit becomes a 3-col colored chip — `BrandChipAccent` for the top item, `BrandChipSurface` for others. Learned items get a green ` ● ` chip; project actions get a `▸` info-blue marker; top item's label is bold-accent. Cursor placement triggers a one-line virt_lines preview below the focused item, describing what the action would target right now (e.g. `commit` → list of dirty filenames, `fix · error` → location + message). 11 action previews covered; uncovered actions gracefully skip.
+
+**7. Playbooks panel chip polish** — `user.playbooks`
+Final persistent panel onto the chip vocabulary. Two-row layout per item: chip row (digit + pin chip + name + ×strength) + dimmed chain row. Top item's digit uses accent bg, others use surface; pinned chains get an ok-green pin chip. `selected_item()` rewired to find the focused item across both rows of the layout. Three persistent panels — Suggest, Playbooks, Compass — now speak one chip vocabulary.
+
+### Stability fixes that landed alongside
+
+- **`curtain.lua`** — guarded the animation timer's close so queued `vim.schedule_wrap` callbacks can't re-enter and call `timer:close()` on an already-closing handle ("handle is already closing" spam fixed).
+- **`user.suggest`** — forward-declared `find_project_root` and `project_name` so the `fingerprint()` function (defined earlier in the file) can call them. Was crashing every `:Suggest` invocation silently.
+- **`user.starship.chain`** — escapes `%` in chip text to `%%` before wrapping with `%#hl#` markers; also sanitizes the noice cmdline echo component in `lualine_c`. Fixes the `E539: Illegal character < >` lualine crash when typing `:`-commands containing `%` (e.g. `:e %`, `:%s/x/y/`).
+- **Snacks dashboard `preset.header`** — newer snacks requires it to be a string, not a function. Dynamic greeting moved into a custom function-section that returns `{ align, padding, text }` — same visual, supported API.
+- **`kubectl.nvim`** — added the missing `build = "make build"` hook to the lazy spec. Plugin needs a Rust client (`libkubectl_client.dylib`) built via Go + Cargo on first install. Without the hook, `:Kubectl` crashed with `module 'kubectl_client' not found`.
+
+### Shared design system
+
+Brand-level chip tokens added to `user.brand` so every panel pulls from one vocabulary:
+
+```lua
+BrandChipAccent   { fg = bg,   bg = accent,  bold = true }
+BrandChipSurface  { fg = text, bg = surface, bold = true }
+BrandChipOk       { fg = bg,   bg = ok,      bold = true }
+BrandChipWarn     { fg = bg,   bg = warn,    bold = true }
+BrandChipErr      { fg = bg,   bg = err,     bold = true }
+BrandChipInfo     { fg = bg,   bg = info,    bold = true }
+```
+
+Change a token, every panel using it updates. Five surfaces and three panels speak the same color language.
+
+---
+
 ## Layout / where things live
 
 ```
@@ -941,6 +1002,9 @@ Cut to the essentials. Only segments with *something to say right now* render. T
 | `.suggest.lua` not loading | `:SuggestProject` shows path + actions; `:SuggestProjectReload` to force re-read |
 | Not sure where my data lives | `:UserState` lists every state file with size + age + description |
 | LSP log eating disk | `:UserState` shows its size; `:UserStateClear lsp_log` wipes it |
+| `<leader>k` says `module 'kubectl_client' not found` | The Rust client wasn't built. `:Lazy build kubectl.nvim` runs the bundled `make build` step (needs Go + Cargo on PATH — both installed by the `brew install python go rustup` line above). If you hit a cargo network timeout fetching `k8s-openapi`, retry with `CARGO_HTTP_TIMEOUT=300 CARGO_NET_RETRY=10 make build` in `~/.local/share/nvim/lazy/kubectl.nvim/` |
+| Statusline says `E539: Illegal character < >` | Was a known noice-cmdline-echo bug when typing `:e %`-style commands. Fixed via `%` escaping in `user.starship.chain` and the noice component. If you see it on a fresh install, pull the latest config |
+| Suggest panel won't open | Verify with `:lua require("user.suggest").show()`. If it errors with `attempt to call global 'project_name' (a nil value)`, you're on an older copy — pull latest (forward-declared in `user.suggest`) |
 
 ---
 

@@ -442,6 +442,34 @@ install_optional() {
         ;;
     esac
   fi
+
+  # kubectl CLI itself (kubectl.nvim needs it to actually contact a cluster;
+  # the plugin's bundled Rust client is the API layer, kubectl is the auth
+  # config + kubeconfig parser).
+  if confirm "Install kubectl + kubediff CLIs (for kubectl.nvim panel)?"; then
+    case "$OS" in
+      macos)
+        brew_install kubectl kubediff
+        ;;
+      ubuntu)
+        if ! have kubectl; then
+          info "Installing kubectl from official Kubernetes apt repo"
+          run sudo mkdir -p -m 755 /etc/apt/keyrings
+          run bash -c 'curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg'
+          run bash -c 'echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list >/dev/null'
+          run sudo apt-get update -qq
+          apt_install kubectl
+        else
+          ok "kubectl already installed"
+        fi
+        # kubediff via cargo (no debian package)
+        if ! have kubediff && have cargo; then
+          info "cargo install kubediff"
+          run cargo install kubediff
+        fi
+        ;;
+    esac
+  fi
 }
 
 # ─── nvim config placement ───────────────────────────────────────────────────
@@ -475,7 +503,22 @@ bootstrap_nvim() {
     err "nvim not on PATH — installation failed"
     exit 1
   fi
-  info "Running Lazy sync (downloads ~120 plugins, takes ~60s)"
+
+  # Warn if kubectl.nvim's build deps are missing — its `make build` hook
+  # needs Go + Cargo on PATH. lazy will still try and silently fail; better
+  # to flag it up front so the user knows what to do.
+  if ! have go || ! have cargo; then
+    warn "Go or Cargo not on PATH — kubectl.nvim's Rust client will fail to build."
+    warn "Either install Go + Rust now (re-run with the language prompts), then"
+    warn "re-run \`:Lazy build kubectl.nvim\` from inside nvim."
+  fi
+
+  # Cargo's default 30s HTTP timeout dies on the ~80MB k8s-openapi crate that
+  # kubectl.nvim depends on. Export longer timeouts for the build hook step.
+  export CARGO_HTTP_TIMEOUT="${CARGO_HTTP_TIMEOUT:-300}"
+  export CARGO_NET_RETRY="${CARGO_NET_RETRY:-10}"
+
+  info "Running Lazy sync (downloads ~120 plugins + compiles build hooks; takes 2-6 min)"
   run nvim --headless "+Lazy! sync" +qa 2>&1 | tail -3
 
   info "Installing all Treesitter parsers (compiles ~30 grammars)"
