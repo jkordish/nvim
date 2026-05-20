@@ -21,6 +21,8 @@ local function registry()
       desc = "Named macro library",                              json = true },
     { id = "tiny_world", path = STATE_DIR .. "/tiny_world.json",
       desc = ":Play tiny_world · ASCII garden state",            json = true },
+    { id = "jira",       path = STATE_DIR .. "/jira_cache.json",
+      desc = "Jira · branch→ticket pins (per cwd)",              json = true },
     { id = "welcome",    path = STATE_DIR .. "/.welcomed",
       desc = "First-launch welcome marker",                      marker = true },
     { id = "tour",       path = STATE_DIR .. "/.toured",

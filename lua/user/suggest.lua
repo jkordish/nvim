@@ -523,6 +523,83 @@ local ACTIONS = {
     run = function() require("user.state").show() end,
   },
   {
+    id = "jira_branch_issue",
+    when = function()
+      local ok, jira = pcall(require, "user.jira"); if not ok then return nil end
+      return jira.current_ticket() and 78 or nil
+    end,
+    label = function()
+      local jira = require("user.jira")
+      return "jira · open " .. jira.current_ticket() .. " (this branch)"
+    end,
+    run = function()
+      local jira = require("user.jira")
+      jira.show_issue(jira.current_ticket())
+    end,
+  },
+  {
+    id = "jira_branch_comment",
+    when = function()
+      local ok, jira = pcall(require, "user.jira"); if not ok then return nil end
+      return jira.current_ticket() and 36 or nil
+    end,
+    label = function()
+      return "jira · comment on " .. require("user.jira").current_ticket()
+    end,
+    run = function()
+      local jira = require("user.jira")
+      jira.prompt_comment(jira.current_ticket())
+    end,
+  },
+  {
+    id = "jira_mine",
+    when = function() return (vim.env.JIRA_BASE_URL or "") ~= "" and 22 or nil end,
+    label = function() return "jira · my open issues" end,
+    run = function() require("user.jira").show_mine() end,
+  },
+  {
+    id = "jira_peek",
+    when = function()
+      if (vim.env.JIRA_BASE_URL or "") == "" then return nil end
+      local cword = vim.fn.expand("<cword>")
+      if cword:match("^[A-Z][A-Z0-9]+%-%d+$") then return 84 end
+      local line = vim.api.nvim_get_current_line() or ""
+      return line:match("[A-Z][A-Z0-9]+%-%d+") and 40 or nil
+    end,
+    label = function()
+      local cword = vim.fn.expand("<cword>")
+      local k = cword:match("^[A-Z][A-Z0-9]+%-%d+$")
+        or (vim.api.nvim_get_current_line() or ""):match("[A-Z][A-Z0-9]+%-%d+")
+      return "jira · peek " .. (k or "?")
+    end,
+    run = function() require("user.jira").peek_under_cursor() end,
+  },
+  {
+    id = "jira_recent",
+    when = function()
+      if (vim.env.JIRA_BASE_URL or "") == "" then return nil end
+      -- jira._cache is module-private; fall back to checking the persisted
+      -- cache file for a non-trivial size (empty caches are < 80B).
+      local st = vim.uv.fs_stat(vim.fn.stdpath("state") .. "/jira_cache.json")
+      return (st and st.size > 80) and 20 or nil
+    end,
+    label = function() return "jira · recently viewed" end,
+    run = function() require("user.jira").show_recent() end,
+  },
+  {
+    id = "confluence_cword",
+    when = function(c)
+      if (vim.env.JIRA_BASE_URL or "") == "" then return nil end
+      local w = vim.fn.expand("<cword>")
+      return (w and #w >= 3 and c.name ~= "") and 18 or nil
+    end,
+    label = function()
+      local w = vim.fn.expand("<cword>")
+      return "confluence · search for `" .. w .. "`"
+    end,
+    run = function() require("user.confluence").show_search(vim.fn.expand("<cword>")) end,
+  },
+  {
     id = "quick_shell",
     when = function() return 14 end,
     label = function() return "run a quick shell command" end,

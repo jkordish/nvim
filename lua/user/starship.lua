@@ -760,6 +760,16 @@ function M.modules.playbook_led()
            fg = M.c.base, bg = bg, gui = "bold" }
 end
 
+-- ─── JIRA TICKET CHIP ─────────────────────────────────────────────────────
+-- Shows the branch's ticket key + status. Cheap: never makes an HTTP call —
+-- only reads jira's in-memory cache (populated when you open a ticket via
+-- :JiraIssue or <leader>ji). Branch parse is cached for 3s in user.jira.
+function M.modules.jira()
+  local ok, jira = pcall(require, "user.jira"); if not ok then return { text = "" } end
+  local seg = jira.statusline_segment(M.c)
+  return seg or { text = "" }
+end
+
 -- ─── SEARCH MATCHES ───────────────────────────────────────────────────────
 -- "[3/47]" while a /-search is active. Cheap; reuses searchcount.
 function M.modules.search()
@@ -935,6 +945,7 @@ function M.left()
     M.modules.lsp(),           -- connected LSP clients
     M.modules.spinner(),       -- animated when user.jobs has running tasks
     M.modules.save_pulse(),    -- "✓ saved · file" chip for 1.6s after BufWritePost
+    M.modules.jira(),          -- branch's Jira ticket + status (cache-only)
     M.modules.playbook_led(),  -- last fired playbook (fades after 10 min)
     M.modules.update(),        -- "↓N" if behind upstream
     M.modules.direnv(),        -- only if .envrc loaded

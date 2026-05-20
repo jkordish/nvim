@@ -44,6 +44,8 @@ return {
       require("user.explain").setup()
       require("user.timetravel").setup()
       require("user.macroreg").setup()
+      require("user.jira").setup()
+      require("user.confluence").setup()
 
       -- ─── cockpit / mission control ───
       require("user.compass").setup()
@@ -121,6 +123,33 @@ return {
 
       -- Markdown
       { "<leader>P",  function() require("user.present").start() end, desc = "Present markdown", ft = "markdown" },
+
+      -- ═════ JIRA / CONFLUENCE (<leader>j / <leader>C) ═════
+      { "<leader>ji", function() require("user.jira").show_issue() end,        desc = "Jira: show issue (branch/prompt)" },
+      { "<leader>jm", function() require("user.jira").show_mine() end,         desc = "Jira: my open issues" },
+      { "<leader>js", function() require("user.jira").show_search() end,       desc = "Jira: JQL search" },
+      { "<leader>jo", function() require("user.jira").open_in_browser() end,   desc = "Jira: open in browser" },
+      { "<leader>jc", function() require("user.jira").prompt_comment() end,    desc = "Jira: comment" },
+      { "<leader>jt", function() require("user.jira").prompt_transition() end, desc = "Jira: transition status" },
+      { "<leader>jb", function()
+          vim.ui.input({ prompt = "pin ticket to this cwd (empty=clear): " }, function(v)
+            require("user.jira").pin_ticket(v or "")
+          end)
+        end, desc = "Jira: pin ticket to cwd" },
+      { "<leader>jr", function() require("user.jira").show_recent() end,        desc = "Jira: recently viewed" },
+      { "<leader>jK", function() require("user.jira").peek_under_cursor() end,  desc = "Jira: peek issue under cursor" },
+      { "<leader>jI", function() require("user.jira").insert_ref("mine") end,   desc = "Jira: insert ref at cursor (mine)" },
+      { "<leader>jR", function() require("user.jira").insert_ref("recent") end, desc = "Jira: insert ref at cursor (recent)" },
+      { "<leader>jf", function() require("user.jira").show_filters() end,       desc = "Jira: saved filters" },
+      { "<leader>jF", function()
+          vim.ui.input({ prompt = "save last JQL as filter name: " }, function(n)
+            if n and n ~= "" then require("user.jira").save_filter(n) end
+          end)
+        end, desc = "Jira: save last search as filter" },
+
+      { "<leader>Cs", function() require("user.confluence").show_search() end, desc = "Confluence: search" },
+      { "<leader>Cp", function() require("user.confluence").show_page() end,   desc = "Confluence: open page (id/url)" },
+      { "<leader>Cr", function() require("user.confluence").show_recent() end, desc = "Confluence: recent pages" },
 
       -- ═════ COCKPIT (<leader>!) ═════
       { "<leader>!!", function() require("user.cockpit").toggle() end, desc = "Cockpit toggle" },
