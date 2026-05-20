@@ -105,6 +105,27 @@ end
 
 local function auth_header(c) return "Authorization: Basic " .. b64(c.email .. ":" .. c.token) end
 
+-- Extract a friendly message from a Jira error body. Jira returns either
+-- `{errorMessages: [...], errors: {field: msg}}` or a plain string. Falls
+-- back to a short slice of the raw body if neither shape is present.
+local function friendly_error(body)
+  if type(body) == "string" then
+    -- might be the "HTTP 400 · {…}" string we built; try to extract the JSON tail
+    local json_tail = body:match("·%s*(.+)$") or body
+    local ok, parsed = pcall(vim.json.decode, json_tail, { luanil = { object = true, array = true } })
+    if ok and type(parsed) == "table" then body = parsed
+    else return (body):sub(1, 200) end
+  end
+  if type(body) ~= "table" then return tostring(body):sub(1, 200) end
+  local parts = {}
+  for _, m in ipairs(body.errorMessages or {}) do table.insert(parts, m) end
+  for field, msg in pairs(body.errors or {}) do
+    table.insert(parts, field .. ": " .. tostring(msg))
+  end
+  if #parts == 0 then return vim.json.encode(body):sub(1, 200) end
+  return table.concat(parts, "  ·  ")
+end
+
 -- Async HTTP via curl. Calls `cb(ok, body|err, status)` on the main loop.
 local function request(method, path, body, cb)
   local c = ensure_configured(); if not c then return end
@@ -140,7 +161,11 @@ local function request(method, path, body, cb)
         local ok, parsed = pcall(vim.json.decode, payload, { luanil = { object = true, array = true } })
         if ok then cb(true, parsed, status) else cb(false, "bad JSON: " .. payload:sub(1, 200), status) end
       else
-        cb(false, ("HTTP %d · %s"):format(status, payload:sub(1, 300)), status)
+        -- Parse Jira's error envelope so callers get "Issue does not exist"
+        -- instead of a 200-char wall of JSON.
+        local ok, parsed = pcall(vim.json.decode, payload, { luanil = { object = true, array = true } })
+        local msg = ok and friendly_error(parsed) or payload:sub(1, 300)
+        cb(false, ("HTTP %d · %s"):format(status, msg), status)
       end
     end)
   end)
@@ -158,7 +183,7 @@ function M.get_issue(key, cb)
   local hit = _cache.issues[key]
   if hit and (os.time() - hit.ts) < _mem_ttl then return cb(true, hit.data) end
   request("GET",
-    "/rest/api/3/issue/" .. url_encode(key) .. "?fields=summary,status,assignee,reporter,priority,issuetype,description,comment,labels,updated",
+    "/rest/api/3/issue/" .. url_encode(key) .. "?fields=summary,status,assignee,reporter,priority,issuetype,description,comment,labels,updated,issuelinks,subtasks,parent,timetracking,worklog",
     nil,
     function(ok, data, status)
       if ok then _cache.issues[key] = { ts = os.time(), data = data } end
@@ -210,28 +235,114 @@ function M.set_assignee(key, account_id, cb)
     { accountId = account_id }, cb)
 end
 
+-- Update arbitrary fields on an issue. Pass `{ description = "...text..." }`
+-- as plain text; we wrap it as a single-paragraph ADF doc here.
+function M.update_description(key, text, cb)
+  local adf = {
+    type = "doc", version = 1,
+    content = { { type = "paragraph", content = { { type = "text", text = text } } } },
+  }
+  request("PUT", "/rest/api/3/issue/" .. url_encode(key),
+    { fields = { description = adf } }, cb)
+end
+
+-- Worklog: time_spent is Jira's compact format ("30m", "2h 15m", "1d").
+function M.add_worklog(key, time_spent, comment_text, cb)
+  local body = { timeSpent = time_spent }
+  if comment_text and comment_text ~= "" then
+    body.comment = {
+      type = "doc", version = 1,
+      content = { { type = "paragraph", content = { { type = "text", text = comment_text } } } },
+    }
+  end
+  request("POST", "/rest/api/3/issue/" .. url_encode(key) .. "/worklog", body, cb)
+end
+
 function M.do_transition(key, transition_id, cb)
   request("POST", "/rest/api/3/issue/" .. url_encode(key) .. "/transitions",
     { transition = { id = transition_id } }, cb)
 end
 
--- ─── ADF → plain text (best-effort, for description + comments) ───────────
+-- ─── ADF → markdown-ish text ───────────────────────────────────────────────
+-- Handles the node types that show up in real tickets:
+--   text (with link/code/strong/em marks), paragraph, heading (1–6),
+--   bulletList, orderedList, listItem, codeBlock (with language fence),
+--   blockquote, rule, hardBreak, mention, inlineCard, panel.
+-- Unknown nodes fall through to their content so we don't lose text.
 local function adf_to_text(node)
   if type(node) ~= "table" then return "" end
-  if node.text then return node.text end
+
+  -- leaf nodes first
+  if node.type == "mention" then
+    local txt = (node.attrs and node.attrs.text) or (node.attrs and node.attrs.id) or "?"
+    -- Atlassian stores mention text already prefixed with "@" most of the time
+    if not txt:match("^@") then txt = "@" .. txt end
+    return txt
+  end
+  if node.type == "inlineCard" then
+    local url = node.attrs and node.attrs.url or ""
+    return ("<%s>"):format(url)
+  end
+  if node.type == "hardBreak" then return "\n" end
+  if node.type == "rule"       then return "\n\n---\n\n" end
+  if node.text then
+    local out = node.text
+    -- apply marks (Atlassian sends them in order, outermost last)
+    for _, mark in ipairs(node.marks or {}) do
+      if mark.type == "code"   then out = "`" .. out .. "`"
+      elseif mark.type == "strong" then out = "**" .. out .. "**"
+      elseif mark.type == "em"     then out = "*" .. out .. "*"
+      elseif mark.type == "strike" then out = "~~" .. out .. "~~"
+      elseif mark.type == "link" and mark.attrs and mark.attrs.href then
+        out = ("[%s](%s)"):format(out, mark.attrs.href)
+      end
+    end
+    return out
+  end
+
+  -- collect children
   local parts = {}
   for _, child in ipairs(node.content or {}) do
     table.insert(parts, adf_to_text(child))
   end
-  local sep = (node.type == "paragraph" or node.type == "heading" or node.type == "listItem") and "\n" or ""
   local joined = table.concat(parts, "")
-  if node.type == "bulletList" or node.type == "orderedList" then
-    return table.concat(vim.tbl_map(function(t) return "  • " .. t end,
-      vim.tbl_filter(function(s) return s ~= "" end, vim.split(joined, "\n"))), "\n")
-  elseif node.type == "codeBlock" then
-    return "\n    " .. joined:gsub("\n", "\n    ") .. "\n"
+
+  -- block types
+  local t = node.type
+  if t == "heading" then
+    local lvl = math.max(1, math.min(6, (node.attrs and node.attrs.level) or 2))
+    return "\n\n" .. string.rep("#", lvl) .. " " .. joined .. "\n"
+  elseif t == "paragraph" then
+    return joined .. "\n\n"
+  elseif t == "listItem" then
+    -- the parent list adds the bullet; we just emit one logical line per item
+    return joined:gsub("\n+$", "") .. "\n"
+  elseif t == "bulletList" then
+    local out = {}
+    for _, line in ipairs(vim.split(joined, "\n")) do
+      if line ~= "" then table.insert(out, "  • " .. line) end
+    end
+    return table.concat(out, "\n") .. "\n\n"
+  elseif t == "orderedList" then
+    local out, n = {}, 0
+    for _, line in ipairs(vim.split(joined, "\n")) do
+      if line ~= "" then n = n + 1; table.insert(out, ("  %d. "):format(n) .. line) end
+    end
+    return table.concat(out, "\n") .. "\n\n"
+  elseif t == "codeBlock" then
+    local lang = (node.attrs and node.attrs.language) or ""
+    return ("\n```%s\n%s\n```\n\n"):format(lang, joined:gsub("\n+$", ""))
+  elseif t == "blockquote" then
+    local out = {}
+    for _, line in ipairs(vim.split(joined, "\n")) do
+      table.insert(out, "> " .. line)
+    end
+    return table.concat(out, "\n") .. "\n\n"
+  elseif t == "panel" then
+    local kind = (node.attrs and node.attrs.panelType) or "info"
+    return ("\n[!%s] %s\n\n"):format(kind:upper(), joined:gsub("\n+$", ""))
   end
-  return joined .. sep
+  return joined
 end
 
 -- ─── branch ticket detection ──────────────────────────────────────────────
@@ -299,6 +410,8 @@ local function status_chip_group(status_or_name)
   return "BrandChipSurface"
 end
 
+-- Returns { lines, nav } where nav is row(1-based) -> { kind, key } so that
+-- <CR> on a row navigates to that issue.
 local function render_issue(buf, data, key)
   local fields    = data.fields or {}
   local status    = (fields.status    or {}).name     or "?"
@@ -311,12 +424,29 @@ local function render_issue(buf, data, key)
   desc_txt = desc_txt:gsub("\r", "")
 
   local lines = {}
+  local nav   = {}    -- row → { kind = "issue", key = "..." }
   table.insert(lines, "")
   table.insert(lines, "    " .. key .. "    " .. summary)
   table.insert(lines, "")
   table.insert(lines, "     status    " .. status)
   table.insert(lines, "     type      " .. itype .. "      priority  " .. priority)
   table.insert(lines, "     assignee  " .. assignee .. "      reporter  " .. reporter)
+  -- parent (epic / story)
+  if fields.parent then
+    local p = fields.parent
+    local pk = p.key or "?"
+    local ps = ((p.fields or {}).summary or ""):sub(1, 60)
+    table.insert(lines, "     parent    " .. pk .. "  ·  " .. ps)
+    nav[#lines] = { kind = "issue", key = pk }
+  end
+  -- time tracking (when present)
+  local tt = fields.timetracking
+  if tt and (tt.originalEstimate or tt.timeSpent) then
+    table.insert(lines, ("     time      est %s · spent %s · remaining %s"):format(
+      tt.originalEstimate or "—",
+      tt.timeSpent or "—",
+      tt.remainingEstimate or "—"))
+  end
   if fields.labels and #fields.labels > 0 then
     table.insert(lines, "     labels    " .. table.concat(fields.labels, ", "))
   end
@@ -325,6 +455,43 @@ local function render_issue(buf, data, key)
   table.insert(lines, "")
   for _, l in ipairs(vim.split(desc_txt, "\n")) do
     table.insert(lines, "    " .. l)
+  end
+
+  -- subtasks
+  local subtasks = fields.subtasks or {}
+  if #subtasks > 0 then
+    table.insert(lines, "")
+    table.insert(lines, "    " .. brand.divider(80))
+    table.insert(lines, ("    subtasks · %d   (cursor on row · <CR> to open)"):format(#subtasks))
+    table.insert(lines, "")
+    for _, s in ipairs(subtasks) do
+      local sk = s.key or "?"
+      local sn = ((s.fields or {}).status or {}).name or ""
+      local ss = ((s.fields or {}).summary or ""):sub(1, 60)
+      table.insert(lines, ("      ▸ %-10s  [%s]  %s"):format(sk, sn, ss))
+      nav[#lines] = { kind = "issue", key = sk }
+    end
+  end
+
+  -- issue links (blocks / blocked by / relates to)
+  local links = fields.issuelinks or {}
+  if #links > 0 then
+    table.insert(lines, "")
+    table.insert(lines, "    " .. brand.divider(80))
+    table.insert(lines, ("    links · %d   (cursor on row · <CR> to open)"):format(#links))
+    table.insert(lines, "")
+    for _, link in ipairs(links) do
+      local target = link.outwardIssue or link.inwardIssue
+      if target then
+        local relation = link.outwardIssue
+          and (link.type and link.type.outward) or (link.type and link.type.inward) or "rel"
+        local tk = target.key or "?"
+        local tn = ((target.fields or {}).status or {}).name or ""
+        local ts = ((target.fields or {}).summary or ""):sub(1, 60)
+        table.insert(lines, ("      %-14s  %-10s  [%s]  %s"):format(relation, tk, tn, ts))
+        nav[#lines] = { kind = "issue", key = tk }
+      end
+    end
   end
 
   local comments = ((fields.comment or {}).comments) or {}
@@ -361,7 +528,8 @@ local function render_issue(buf, data, key)
   -- muted labels
   for i, line in ipairs(lines) do
     local label = line:match("^%s+([%a]+)%s%s")
-    if label and ({ status = 1, type = 1, priority = 1, assignee = 1, reporter = 1, labels = 1 })[label] then
+    if label and ({ status = 1, type = 1, priority = 1, assignee = 1, reporter = 1,
+                    labels = 1, parent = 1, time = 1 })[label] then
       pcall(vim.api.nvim_buf_set_extmark, buf, NS, i - 1, 0,
         { end_col = 4 + #label + 4, hl_group = "BrandMuted" })
     end
@@ -369,11 +537,12 @@ local function render_issue(buf, data, key)
       pcall(vim.api.nvim_buf_set_extmark, buf, NS, i - 1, 0,
         { end_line = i, hl_group = "BrandMuted" })
     end
-    if line:find("^%s+comments · ") then
+    if line:find("^%s+comments · ") or line:find("^%s+subtasks · ") or line:find("^%s+links · ") then
       pcall(vim.api.nvim_buf_set_extmark, buf, NS, i - 1, 0,
         { end_line = i, hl_group = "BrandAccent" })
     end
   end
+  return nav
 end
 
 function M.show_issue(key)
@@ -403,14 +572,25 @@ function M.show_issue(key)
       vim.bo[r.buf].modifiable = false
       return
     end
-    render_issue(r.buf, data, key)
+    local nav = render_issue(r.buf, data, key) or {}
     push_recent(key)
     -- buffer-local actions
     local opts = { buffer = r.buf, silent = true, nowait = true }
+    -- <CR> on a related-issue row navigates
+    vim.keymap.set("n", "<CR>", function()
+      local row = vim.api.nvim_win_get_cursor(r.win)[1]
+      local entry = nav[row]
+      if entry and entry.kind == "issue" then
+        r.close()
+        vim.schedule(function() M.show_issue(entry.key) end)
+      end
+    end, opts)
     vim.keymap.set("n", "o", function() M.open_in_browser(key) end, opts)
     vim.keymap.set("n", "c", function() r.close(); vim.schedule(function() M.prompt_comment(key) end) end, opts)
     vim.keymap.set("n", "t", function() r.close(); vim.schedule(function() M.prompt_transition(key) end) end, opts)
     vim.keymap.set("n", "a", function() r.close(); vim.schedule(function() M.prompt_assignee(key) end) end, opts)
+    vim.keymap.set("n", "e", function() r.close(); vim.schedule(function() M.edit_description(key) end) end, opts)
+    vim.keymap.set("n", "w", function() r.close(); vim.schedule(function() M.log_work(key) end) end, opts)
     vim.keymap.set("n", "r", function()
       _cache.issues[key] = nil
       r.close(); vim.schedule(function() M.show_issue(key) end)
@@ -488,6 +668,108 @@ function M.prompt_comment(key)
   -- normal-mode quick cancel
   vim.keymap.set("n", "q", "<cmd>close<CR>",
     { buffer = buf, silent = true, nowait = true })
+end
+
+-- ─── description editor ──────────────────────────────────────────────────
+-- Opens the issue's current description in a markdown composer pre-filled
+-- with the text we know about. :w PUTs the issue with the new description
+-- (wrapped in a single-paragraph ADF doc). Plain-text fidelity only —
+-- richer ADF (tables, panels, mixed marks) isn't round-trippable here.
+function M.edit_description(key)
+  if not key or key == "" then key = M.current_ticket() end
+  if not key then brand.notify("no issue key", vim.log.levels.WARN, { title = "jira" }); return end
+
+  -- Fetch fresh (don't trust the cache — the user may be reacting to stale view)
+  brand.notify("loading description for " .. key .. " …", nil, { title = "jira" })
+  _cache.issues[key] = nil
+  M.get_issue(key, function(ok, data)
+    if not ok then
+      brand.notify("load failed: " .. tostring(data), vim.log.levels.ERROR, { title = "jira" })
+      return
+    end
+    local body_text = (data.fields and adf_to_text(data.fields.description)) or ""
+    body_text = body_text:gsub("\r", "")
+
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].buftype   = "acwrite"
+    vim.bo[buf].bufhidden = "wipe"
+    vim.bo[buf].filetype  = "markdown"
+    vim.api.nvim_buf_set_name(buf, "jira-description://" .. key .. "-" .. os.time())
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(body_text, "\n"))
+
+    local W = math.max(72, math.floor(vim.o.columns * 0.7))
+    local H = math.max(16, math.floor(vim.o.lines   * 0.6))
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", style = "minimal", border = "rounded",
+      title = brand.title("edit description · " .. key .. "   :w submit  ·  :q cancel",
+        { glyph = "◆" }),
+      title_pos = "left",
+      width = W, height = H,
+      row = math.floor((vim.o.lines   - H) / 2),
+      col = math.floor((vim.o.columns - W) / 2),
+    })
+    pcall(function()
+      vim.wo[win].winhighlight = "Normal:BrandFloat,NormalFloat:BrandFloat,FloatBorder:BrandFloatBorder,FloatTitle:BrandFloatTitle"
+      vim.wo[win].wrap = true; vim.wo[win].linebreak = true
+      vim.wo[win].number = false; vim.wo[win].signcolumn = "no"
+    end)
+
+    vim.api.nvim_create_autocmd("BufWriteCmd", {
+      buffer = buf, once = true,
+      callback = function()
+        local text = vim.fn.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+        vim.bo[buf].modified = false
+        if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+        brand.notify("updating description …", nil, { title = "jira" })
+        M.update_description(key, text, function(uok, err)
+          if uok then
+            _cache.issues[key] = nil
+            brand.notify("description updated · " .. key, nil, { title = "jira" })
+          else
+            brand.notify("update failed: " .. tostring(err), vim.log.levels.ERROR, { title = "jira" })
+          end
+        end)
+      end,
+    })
+
+    vim.keymap.set("n", "q", "<cmd>close<CR>",
+      { buffer = buf, silent = true, nowait = true })
+  end)
+end
+
+-- ─── worklog composer ─────────────────────────────────────────────────────
+-- :JiraLog 30m fixed the bug
+-- Or interactively: `w` in the issue float prompts duration + optional comment.
+-- Jira time format: w=weeks, d=days, h=hours, m=minutes. Mix freely: "2h 15m".
+local TIME_PAT = "^%s*[%d.]+%s*[wdhm]"
+function M.log_work(key, time_spent, comment_text)
+  if not key or key == "" then key = M.current_ticket() end
+  if not key then brand.notify("no issue key", vim.log.levels.WARN, { title = "jira" }); return end
+
+  local function go(ts, cmt)
+    if not ts or not ts:match(TIME_PAT) then
+      brand.notify("invalid time format · use 30m / 2h / 1d 4h / 1w", vim.log.levels.WARN,
+        { title = "jira" })
+      return
+    end
+    brand.notify("logging " .. ts .. " on " .. key .. " …", nil, { title = "jira" })
+    M.add_worklog(key, ts, cmt, function(ok, err)
+      if ok then
+        _cache.issues[key] = nil
+        brand.notify("logged " .. ts .. " · " .. key, nil, { title = "jira" })
+      else
+        brand.notify("worklog failed: " .. tostring(err), vim.log.levels.ERROR, { title = "jira" })
+      end
+    end)
+  end
+
+  if time_spent and time_spent ~= "" then return go(time_spent, comment_text) end
+  vim.ui.input({ prompt = "log time on " .. key .. " (e.g. 30m, 2h 15m): " }, function(ts)
+    if not ts or ts == "" then return end
+    vim.ui.input({ prompt = "worklog comment (optional): " }, function(cmt)
+      go(ts, cmt or "")
+    end)
+  end)
 end
 
 -- ─── assignee prompt ──────────────────────────────────────────────────────
@@ -585,7 +867,11 @@ local function brand_winhl(win)
 end
 
 -- on_select: optional override called instead of show_issue(key) on <CR>
-local function pick_from_search(title, issues, on_select)
+-- opts table: { on_select(key)?, on_refresh(cb(new_issues))? }
+-- Legacy: passing a function as the 3rd arg is treated as on_select.
+local function pick_from_search(title, issues, opts)
+  if type(opts) == "function" then opts = { on_select = opts } end
+  opts = opts or {}
   if not issues or #issues == 0 then
     brand.notify("no results", nil, { title = "jira" }); return
   end
@@ -675,7 +961,6 @@ local function pick_from_search(title, issues, on_select)
     local cur = vim.api.nvim_win_get_cursor(list_win)[1]
     local it = filtered[cur]; if not it then return end
     local f = it.fields or {}
-    local f = it.fields or {}
     local out = {
       "",
       "  " .. it.key .. "   " .. (f.summary or ""),
@@ -745,34 +1030,58 @@ local function pick_from_search(title, issues, on_select)
   for _, k in ipairs({ "q", "<Esc>" }) do
     vim.keymap.set("n", k, close_all, opts)
   end
+  local on_select  = opts.on_select
+  local on_refresh = opts.on_refresh
+  local kopts = { buffer = list_buf, silent = true, nowait = true }
+  for _, k in ipairs({ "q", "<Esc>" }) do
+    vim.keymap.set("n", k, close_all, kopts)
+  end
   vim.keymap.set("n", "<CR>", function()
     local k = selected_key(); if not k then return end
     close_all()
     if on_select then vim.schedule(function() on_select(k) end)
     else vim.schedule(function() M.show_issue(k) end) end
-  end, opts)
+  end, kopts)
   vim.keymap.set("n", "o", function()
     local k = selected_key(); if k then M.open_in_browser(k) end
-  end, opts)
+  end, kopts)
   vim.keymap.set("n", "c", function()
     local k = selected_key(); close_all()
     if k then vim.schedule(function() M.prompt_comment(k) end) end
-  end, opts)
+  end, kopts)
   vim.keymap.set("n", "t", function()
     local k = selected_key(); close_all()
     if k then vim.schedule(function() M.prompt_transition(k) end) end
-  end, opts)
+  end, kopts)
   -- live filter
   vim.keymap.set("n", "/", function()
     vim.ui.input({ prompt = "filter: ", default = filter }, function(v)
       filter = v or ""
       render_list(); render_preview()
     end)
-  end, opts)
+  end, kopts)
   vim.keymap.set("n", "\\", function()
     filter = ""
     render_list(); render_preview()
-  end, opts)
+  end, kopts)
+  -- refresh (re-runs the source query, preserves cursor row)
+  if on_refresh then
+    vim.keymap.set("n", "R", function()
+      local saved_row = vim.api.nvim_win_get_cursor(list_win)[1]
+      brand.notify("refreshing …", nil, { title = "jira" })
+      on_refresh(function(new_issues)
+        if not vim.api.nvim_buf_is_valid(list_buf) then return end
+        -- mutate the existing `issues` table in place so render_list sees it
+        for k in pairs(issues) do issues[k] = nil end
+        for i, v in ipairs(new_issues or {}) do issues[i] = v end
+        -- bust per-key memory cache so previews re-fetch fresh data
+        for _, it in ipairs(issues) do _cache.issues[it.key] = nil end
+        render_list(); render_preview()
+        pcall(vim.api.nvim_win_set_cursor, list_win,
+          { math.min(saved_row, math.max(1, #filtered)), 0 })
+      end)
+    end, kopts)
+  end
 end
 
 function M.show_mine()
@@ -782,7 +1091,11 @@ function M.show_mine()
       brand.notify("search failed: " .. tostring(data), vim.log.levels.ERROR, { title = "jira" })
       return
     end
-    pick_from_search("my open issues", data.issues or {})
+    pick_from_search("my open issues", data.issues or {}, {
+      on_refresh = function(cb)
+        M.my_open_issues(function(rok, rdata) cb(rok and rdata.issues or {}) end)
+      end,
+    })
   end)
 end
 
@@ -799,7 +1112,11 @@ function M.show_search(jql)
       brand.notify("search failed: " .. tostring(data), vim.log.levels.ERROR, { title = "jira" })
       return
     end
-    pick_from_search("search", data.issues or {})
+    pick_from_search("search", data.issues or {}, {
+      on_refresh = function(cb)
+        M.search(jql, function(rok, rdata) cb(rok and rdata.issues or {}) end, 50)
+      end,
+    })
   end, 50)
 end
 
@@ -807,6 +1124,28 @@ end
 -- Issues are fetched in parallel, then handed to the standard picker. Keys
 -- already in the in-memory cache resolve instantly. Failed fetches drop out
 -- silently so the picker still opens for whatever resolved.
+-- Fetch the full set of recent issues. cb(issues) on completion (drops keys
+-- whose fetches failed). cache_busted = true forces a re-fetch.
+local function fetch_recent_issues(cb, cache_busted)
+  local keys = _cache.recent or {}
+  if #keys == 0 then return cb({}) end
+  if cache_busted then
+    for _, k in ipairs(keys) do _cache.issues[k] = nil end
+  end
+  local remaining, results = #keys, {}
+  for i, key in ipairs(keys) do
+    M.get_issue(key, function(ok, data)
+      if ok then results[i] = data end
+      remaining = remaining - 1
+      if remaining == 0 then
+        local out = {}
+        for j = 1, #keys do if results[j] then table.insert(out, results[j]) end end
+        cb(out)
+      end
+    end)
+  end
+end
+
 function M.show_recent()
   local keys = _cache.recent or {}
   if #keys == 0 then
@@ -814,26 +1153,16 @@ function M.show_recent()
     return
   end
   brand.notify("loading recent (" .. #keys .. ") …", nil, { title = "jira" })
-  local remaining = #keys
-  local results = {}  -- index-aligned with keys (so order is preserved)
-  for i, key in ipairs(keys) do
-    M.get_issue(key, function(ok, data)
-      if ok then results[i] = data end
-      remaining = remaining - 1
-      if remaining == 0 then
-        local issues = {}
-        for j = 1, #keys do
-          if results[j] then table.insert(issues, results[j]) end
-        end
-        if #issues == 0 then
-          brand.notify("none of the recent issues could be fetched",
-            vim.log.levels.WARN, { title = "jira" })
-          return
-        end
-        pick_from_search("recent", issues)
-      end
-    end)
-  end
+  fetch_recent_issues(function(issues)
+    if #issues == 0 then
+      brand.notify("none of the recent issues could be fetched",
+        vim.log.levels.WARN, { title = "jira" })
+      return
+    end
+    pick_from_search("recent", issues, {
+      on_refresh = function(cb) fetch_recent_issues(cb, true) end,
+    })
+  end)
 end
 
 -- ─── follow JIRA-123 under cursor (any buffer) ────────────────────────────
@@ -1274,6 +1603,16 @@ function M.setup()
   vim.api.nvim_create_user_command("JiraAssign",
     function(a) M.prompt_assignee(a.args ~= "" and a.args or nil) end,
     { nargs = "?", desc = "Assign an issue (KEY or current branch)" })
+
+  vim.api.nvim_create_user_command("JiraEdit",
+    function(a) M.edit_description(a.args ~= "" and a.args or nil) end,
+    { nargs = "?", desc = "Edit issue description (KEY or current branch)" })
+  vim.api.nvim_create_user_command("JiraLog",
+    function(a)
+      local time_spent, comment = a.args:match("^(%S+)%s*(.*)$")
+      M.log_work(nil, time_spent, comment)
+    end,
+    { nargs = "*", desc = "Log work on the current ticket · :JiraLog 30m [comment]" })
 end
 
 return M

@@ -108,7 +108,16 @@ local function request(method, path, body, cb)
         local ok, parsed = pcall(vim.json.decode, payload, { luanil = { object = true, array = true } })
         cb(ok, ok and parsed or ("bad JSON: " .. payload:sub(1, 200)), status)
       else
-        cb(false, ("HTTP %d · %s"):format(status, payload:sub(1, 300)), status)
+        -- Try to surface Confluence's `message` field (v2 errors) or the
+        -- jira-style errorMessages list (older endpoints).
+        local ok, parsed = pcall(vim.json.decode, payload, { luanil = { object = true, array = true } })
+        local msg = payload:sub(1, 300)
+        if ok and type(parsed) == "table" then
+          if parsed.message then msg = parsed.message
+          elseif parsed.errorMessages and #parsed.errorMessages > 0 then msg = table.concat(parsed.errorMessages, "  ·  ")
+          elseif parsed.errors and parsed.errors[1] and parsed.errors[1].title then msg = parsed.errors[1].title end
+        end
+        cb(false, ("HTTP %d · %s"):format(status, msg), status)
       end
     end)
   end)
@@ -374,6 +383,207 @@ function M.show_page(input)
   end)
 end
 
+-- ─── native list+preview picker ───────────────────────────────────────────
+-- Mirrors Jira's picker: list on the left, preview on the right. Each item
+-- is a { id, title, type } row; preview lazy-fetches the first ~80 lines of
+-- page text on cursor move (cached via _preview_cache). Same key bindings:
+-- / filter, \ clear filter, R refresh, o open in browser, <CR> select.
+local _preview_cache = {}   -- id -> text (excerpt)
+
+local function brand_winhl(win)
+  pcall(function()
+    vim.wo[win].winhighlight = table.concat({
+      "Normal:BrandFloat", "NormalFloat:BrandFloat",
+      "FloatBorder:BrandFloatBorder", "FloatTitle:BrandFloatTitle",
+      "CursorLine:Visual",
+    }, ",")
+    vim.wo[win].number = false
+    vim.wo[win].relativenumber = false
+    vim.wo[win].signcolumn = "no"
+  end)
+end
+
+-- opts: { on_select(item)?, on_refresh(cb(items))? }
+local function pick_pages(title, items, opts)
+  opts = opts or {}
+  if not items or #items == 0 then
+    brand.notify("no results", nil, { title = "confluence" }); return
+  end
+
+  local cols, lines = vim.o.columns, vim.o.lines
+  local W = math.floor(cols * 0.86)
+  local H = math.floor(lines * 0.72)
+  local list_w = math.max(46, math.floor(W * 0.4))
+  local prev_w = W - list_w - 2
+  local row = math.floor((lines - H) / 2)
+  local col = math.floor((cols - W) / 2)
+
+  local list_buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[list_buf].buftype = "nofile"; vim.bo[list_buf].bufhidden = "wipe"
+  local list_win = vim.api.nvim_open_win(list_buf, true, {
+    relative = "editor", style = "minimal", border = "rounded",
+    title = brand.title(title, { glyph = "◆" }), title_pos = "left",
+    width = list_w, height = H, row = row, col = col,
+  })
+  brand_winhl(list_win); vim.wo[list_win].cursorline = true
+
+  local prev_buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[prev_buf].buftype = "nofile"; vim.bo[prev_buf].bufhidden = "wipe"
+  vim.bo[prev_buf].filetype = "markdown"
+  local prev_win = vim.api.nvim_open_win(prev_buf, false, {
+    relative = "editor", style = "minimal", border = "rounded",
+    title = brand.title("preview", { glyph = "◆" }), title_pos = "left",
+    width = prev_w, height = H, row = row, col = col + list_w + 2,
+  })
+  brand_winhl(prev_win)
+  vim.wo[prev_win].wrap = true; vim.wo[prev_win].linebreak = true
+
+  local filter, filtered = "", items
+  local lns = vim.api.nvim_create_namespace("user_confluence_picker_" .. list_buf)
+
+  local function apply_filter()
+    if filter == "" then filtered = items; return end
+    local needle = filter:lower()
+    filtered = {}
+    for _, it in ipairs(items) do
+      local hay = ((it.title or "") .. " " .. (it.type or "") .. " " .. (it.id or "")):lower()
+      if hay:find(needle, 1, true) then table.insert(filtered, it) end
+    end
+  end
+
+  local function render_list()
+    apply_filter()
+    local title_text = title .. (filter ~= "" and ("  ·  filter: " .. filter) or "")
+                       .. ("  ·  " .. #filtered .. "/" .. #items)
+    pcall(vim.api.nvim_win_set_config, list_win, { title = brand.title(title_text, { glyph = "◆" }) })
+    local rows = {}
+    for _, it in ipairs(filtered) do
+      table.insert(rows,
+        string.format(" %-8s  %s", (it.type or "page"):sub(1, 8), (it.title or "(?)"):sub(1, list_w - 14)))
+    end
+    if #rows == 0 then rows = { "", "    (no matches — press \\ to clear filter)" } end
+    vim.bo[list_buf].modifiable = true
+    vim.api.nvim_buf_set_lines(list_buf, 0, -1, false, rows)
+    vim.bo[list_buf].modifiable = false
+    vim.api.nvim_buf_clear_namespace(list_buf, lns, 0, -1)
+    for i, _ in ipairs(filtered) do
+      pcall(vim.api.nvim_buf_set_extmark, list_buf, lns, i - 1, 1,
+        { end_col = 9, hl_group = "BrandMuted" })
+    end
+    if #filtered > 0 then pcall(vim.api.nvim_win_set_cursor, list_win, { 1, 0 }) end
+  end
+  render_list()
+
+  local render_lock = false
+  local function render_preview()
+    if render_lock or not vim.api.nvim_buf_is_valid(prev_buf) then return end
+    local cur = vim.api.nvim_win_get_cursor(list_win)[1]
+    local it = filtered[cur]; if not it then return end
+    local out = {
+      "", "  # " .. (it.title or "(untitled)"), "",
+      "   id      " .. tostring(it.id or "?"),
+      "   type    " .. tostring(it.type or "—"),
+      "",
+      "  " .. brand.divider(prev_w - 4), "",
+    }
+    local cached = _preview_cache[it.id]
+    if cached then
+      for _, l in ipairs(vim.split(cached, "\n")) do table.insert(out, "  " .. l) end
+    else
+      table.insert(out, "  " .. brand.spinner("confluence_picker") .. "  loading excerpt …")
+      M.get_page(it.id, function(ok, page)
+        if not ok then return end
+        if not vim.api.nvim_buf_is_valid(prev_buf) then return end
+        local body = ((page.body or {}).storage or {}).value or ""
+        local excerpt = html_to_text(body)
+        -- keep ~80 lines or 3000 chars, whichever comes first
+        local lines_out, char_count = {}, 0
+        for _, l in ipairs(vim.split(excerpt, "\n")) do
+          char_count = char_count + #l
+          table.insert(lines_out, l)
+          if #lines_out >= 80 or char_count > 3000 then break end
+        end
+        _preview_cache[it.id] = table.concat(lines_out, "\n")
+        if vim.api.nvim_win_is_valid(list_win)
+           and vim.api.nvim_win_get_cursor(list_win)[1] == cur then
+          render_preview()
+        end
+      end)
+    end
+    render_lock = true
+    vim.bo[prev_buf].modifiable = true
+    vim.api.nvim_buf_set_lines(prev_buf, 0, -1, false, out)
+    vim.bo[prev_buf].modifiable = false
+    render_lock = false
+  end
+  render_preview()
+
+  local grp = vim.api.nvim_create_augroup("user_confluence_picker_" .. list_buf, { clear = true })
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = grp, buffer = list_buf, callback = render_preview,
+  })
+
+  local function close_all()
+    pcall(vim.api.nvim_del_augroup_by_id, grp)
+    if vim.api.nvim_win_is_valid(list_win) then vim.api.nvim_win_close(list_win, true) end
+    if vim.api.nvim_win_is_valid(prev_win) then vim.api.nvim_win_close(prev_win, true) end
+  end
+  local function selected_item()
+    local r = vim.api.nvim_win_get_cursor(list_win)[1]
+    return filtered[r]
+  end
+
+  local c = ensure_configured()
+  local kopts = { buffer = list_buf, silent = true, nowait = true }
+  for _, k in ipairs({ "q", "<Esc>" }) do
+    vim.keymap.set("n", k, close_all, kopts)
+  end
+  vim.keymap.set("n", "<CR>", function()
+    local it = selected_item(); if not it then return end
+    close_all()
+    if opts.on_select then vim.schedule(function() opts.on_select(it) end)
+    else vim.schedule(function() M.show_page(it.id) end) end
+  end, kopts)
+  vim.keymap.set("n", "o", function()
+    local it = selected_item()
+    if it and c then vim.ui.open(c.base .. "/wiki/spaces/_/pages/" .. it.id) end
+  end, kopts)
+  vim.keymap.set("n", "/", function()
+    vim.ui.input({ prompt = "filter: ", default = filter }, function(v)
+      filter = v or ""; render_list(); render_preview()
+    end)
+  end, kopts)
+  vim.keymap.set("n", "\\", function()
+    filter = ""; render_list(); render_preview()
+  end, kopts)
+  if opts.on_refresh then
+    vim.keymap.set("n", "R", function()
+      local saved = vim.api.nvim_win_get_cursor(list_win)[1]
+      brand.notify("refreshing …", nil, { title = "confluence" })
+      opts.on_refresh(function(new_items)
+        if not vim.api.nvim_buf_is_valid(list_buf) then return end
+        for k in pairs(items) do items[k] = nil end
+        for i, v in ipairs(new_items or {}) do items[i] = v end
+        for _, it in ipairs(items) do _preview_cache[it.id] = nil end
+        render_list(); render_preview()
+        pcall(vim.api.nvim_win_set_cursor, list_win,
+          { math.min(saved, math.max(1, #filtered)), 0 })
+      end)
+    end, kopts)
+  end
+end
+
+-- Map a CQL search response → picker items
+local function items_from_search(data)
+  local out = {}
+  for _, r in ipairs((data or {}).results or {}) do
+    local content = r.content or {}
+    local title = (content.title or r.title or "(untitled)"):gsub("@@@hl@@@", ""):gsub("@@@endhl@@@", "")
+    table.insert(out, { id = tostring(content.id or r.id), title = title, type = content.type or "page" })
+  end
+  return out
+end
+
 function M.show_search(query)
   if not query or query == "" then
     vim.ui.input({ prompt = "search (CQL or plain text): " }, function(q)
@@ -382,7 +592,6 @@ function M.show_search(query)
     return
   end
   local cql = query
-  -- Heuristic: if no operator looks present, treat as text search.
   if not query:find("=") and not query:find("~") then
     cql = ('text ~ "%s" ORDER BY lastmodified DESC'):format(query:gsub('"', '\\"'))
   end
@@ -392,22 +601,11 @@ function M.show_search(query)
       brand.notify("search failed: " .. tostring(data), vim.log.levels.ERROR, { title = "confluence" })
       return
     end
-    local results = data.results or {}
-    if #results == 0 then
-      brand.notify("no results", nil, { title = "confluence" }); return
-    end
-    local items, ids = {}, {}
-    for _, r in ipairs(results) do
-      local content = r.content or {}
-      local title = (content.title or r.title or "(untitled)"):gsub("@@@hl@@@", ""):gsub("@@@endhl@@@", "")
-      local typ = content.type or "—"
-      table.insert(items, ("%-8s  %s"):format(typ, title:sub(1, 80)))
-      table.insert(ids,   content.id or r.id)
-    end
-    vim.ui.select(items, { prompt = "confluence · pick: " }, function(_, idx)
-      if not idx then return end
-      M.show_page(ids[idx])
-    end)
+    pick_pages("search", items_from_search(data), {
+      on_refresh = function(cb)
+        M.search(cql, function(rok, rdata) cb(rok and items_from_search(rdata) or {}) end)
+      end,
+    })
   end)
 end
 
@@ -419,14 +617,19 @@ function M.show_recent()
     brand.notify("no recent pages yet · open one first", nil, { title = "confluence" })
     return
   end
-  local items = {}
-  for _, r in ipairs(_cache.recent) do
-    table.insert(items, ("%-12s  %s"):format(r.id, (r.title or "(untitled)"):sub(1, 80)))
+  local function build()
+    local out = {}
+    for _, r in ipairs(_cache.recent) do
+      table.insert(out, { id = r.id, title = r.title or "(untitled)", type = "page" })
+    end
+    return out
   end
-  vim.ui.select(items, { prompt = "recent confluence pages: " }, function(_, idx)
-    if not idx then return end
-    M.show_page(_cache.recent[idx].id)
-  end)
+  pick_pages("recent", build(), {
+    on_refresh = function(cb)
+      for k in pairs(_preview_cache) do _preview_cache[k] = nil end
+      cb(build())
+    end,
+  })
 end
 
 function M.show_recent_edits()

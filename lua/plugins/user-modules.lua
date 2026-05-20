@@ -146,8 +146,10 @@ return {
             if n and n ~= "" then require("user.jira").save_filter(n) end
           end)
         end, desc = "Jira: save last search as filter" },
-      { "<leader>jn", function() require("user.jira").create_flow() end,    desc = "Jira: new issue (composer)" },
-      { "<leader>ja", function() require("user.jira").prompt_assignee() end, desc = "Jira: assign issue" },
+      { "<leader>jn", function() require("user.jira").create_flow() end,     desc = "Jira: new issue (composer)" },
+      { "<leader>ja", function() require("user.jira").prompt_assignee() end,  desc = "Jira: assign issue" },
+      { "<leader>jE", function() require("user.jira").edit_description() end, desc = "Jira: edit description" },
+      { "<leader>jw", function() require("user.jira").log_work() end,         desc = "Jira: log work (current ticket)" },
 
       { "<leader>Cs", function() require("user.confluence").show_search() end,       desc = "Confluence: search" },
       { "<leader>Cp", function() require("user.confluence").show_page() end,         desc = "Confluence: open page (id/url)" },
