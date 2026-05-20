@@ -5,21 +5,88 @@ Treesitter with context highlighting, blink.cmp completion, Copilot inline +
 CopilotChat + Avante (Claude), Telescope, Neo-tree, Gitsigns/Diffview/Lazygit,
 Trouble, Flash, UFO folds.
 
-## First-run checklist
+## Install — one shot
+
+Copy-paste this whole block. Safe to re-run; brew skips what's installed.
 
 ```bash
-# external tools used by various plugins
-brew install ripgrep fd lazygit
-# nerd font for icons
-brew install --cask font-jetbrains-mono-nerd-font
+# ─── REQUIRED: editor + tools the config depends on ───
+brew install neovim ripgrep fd tree-sitter tree-sitter-cli git node
 
-# launch nvim — lazy.nvim bootstraps itself
-nvim
-# Mason will auto-install LSPs + tools on first BufRead
-# then auth Copilot:
-:Copilot auth
-# set ANTHROPIC_API_KEY for Avante
-export ANTHROPIC_API_KEY=...
+# ─── HIGHLY RECOMMENDED (lots of features use these) ───
+brew install lazygit pngpaste yazi gh jq
+brew install --cask font-jetbrains-mono-nerd-font   # nerd font for icons
+brew install --cask ghostty                          # for inline image rendering
+
+# ─── LANGUAGE TOOLCHAINS (install only what you write) ───
+brew install python go rustup                        # python + go + rust
+rustup-init -y                                       # finishes rust install
+brew install --cask docker                           # devcontainer.nvim
+
+# ─── OPTIONAL: notebook support (Quarto + Molten) ───
+brew install quarto
+pip install --user pynvim jupyter_client cairosvg pnglatex plotly kaleido pyperclip nbformat
+# then in nvim:  :UpdateRemotePlugins  + restart
+
+# ─── OPTIONAL: devdocs preview renderer ───
+brew install glow
+```
+
+## After install
+
+```bash
+nvim                      # lazy.nvim bootstraps + installs every plugin
+# wait for :Lazy to finish; first launch takes ~60s
+
+# inside nvim:
+:Mason                    # auto-installs all LSPs/formatters/linters/DAP adapters
+:checkhealth              # confirm everything is green
+
+# auth:
+:Copilot auth             # GitHub Copilot
+gh auth login             # Octo (GitHub PRs/issues from your shell)
+
+# Avante (Claude) — add to ~/.zshrc:
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+## What Mason handles for you (no brew needed)
+
+Run `:Mason` once and these install automatically:
+
+**LSPs:** `lua_ls`, `pyright`, `ruff`, `vtsls`, `eslint`, `gopls`, `bashls`, `jsonls`,
+`yamlls`, `marksman`, `taplo`, `dockerls`, `emmet_language_server`, `tailwindcss`, `ltex` ·
+**Formatters:** `stylua`, `shfmt`, `prettierd`, `black`, `isort`, `goimports` ·
+**Linters:** `shellcheck`, `hadolint`, `markdownlint` ·
+**DAP:** `debugpy`, `codelldb`, `delve`, `js-debug-adapter` ·
+**Rust:** `rust_analyzer` installed by rustaceanvim, not Mason.
+
+## Per-feature setup
+
+| Feature | What you need beyond the brew block |
+|---|---|
+| Copilot | `:Copilot auth` |
+| Avante (Claude) | `export ANTHROPIC_API_KEY=...` in shell rc |
+| Octo / gh-actions | `gh auth login` |
+| Lazygit (`<leader>gG`) | included in brew block |
+| Yazi file manager (`<leader>fy`) | included in brew block |
+| Inline images in markdown | Ghostty/WezTerm/Kitty terminal + Snacks.image (built-in, no install) |
+| Markdown preview (`<leader>mp`) | node from brew block — plugin builds itself |
+| Live server (`<leader>Wl`) | auto-installs `live-server` via npm |
+| Database UI (`<leader>D`) | nothing extra; add connections via `:DBUIAddConnection` |
+| REST client (`.http` files) | nothing extra |
+| Devcontainers (`<leader>C`) | Docker Desktop or compatible runtime |
+| Jupyter notebooks | the optional notebook block above; plugins stay dormant until then |
+| Obsidian (`<leader>n*`) | nothing — `~/notes/{inbox,daily,assets}` auto-created on first launch. Edit `lua/plugins/notes.lua` to point at an existing vault. |
+| cheat.sh (`<leader>?h`) | internet |
+| devdocs (`<leader>?d`) | `glow` from optional block; pre-fetch with `:DevdocsFetch <slug>` |
+
+## Verifying you're set up
+
+```vim
+:checkhealth              " everything green except the 'optional' items you skipped
+:Lazy                     " all plugins should show ●  not ⏳
+:Mason                    " LSPs/tools should all show ◍ (installed)
 ```
 
 ## Leader = Space
@@ -326,24 +393,5 @@ ltex-ls auto-attaches in `markdown`/`tex`/`text`/`gitcommit` for grammar checkin
     ├── writing.lua             # pencil, ltex (grammar), wordy
     └── terminal-hub.lua        # flatten, fzf-lua, devcontainer, cheat.sh, devdocs
 ```
-
-## Setup per feature
-
-| Feature | What you need |
-|---|---|
-| Copilot | `:Copilot auth` |
-| Avante (Claude) | `export ANTHROPIC_API_KEY=...` |
-| Octo (GitHub) | `gh auth login` |
-| Database UI | add via `:DBUIAddConnection` or `~/.local/share/nvim/dadbod_ui/connections.json` |
-| Yazi file manager | `brew install yazi` |
-| Image rendering | `luarocks --local install magick` + Kitty/WezTerm/Ghostty terminal |
-| Markdown preview | node + npm (auto-builds on first launch) |
-| Jupyter / Molten | `pip install --user pynvim jupyter_client cairosvg pnglatex plotly kaleido` then `:UpdateRemotePlugins` |
-| Quarto preview | `brew install quarto` |
-| Obsidian | edit `lua/plugins/notes.lua` to point at your vault (default `~/notes`) |
-| Live server | auto-installs `live-server` globally on first run |
-| Devcontainers | Docker Desktop or compatible runtime |
-| cheat.sh | internet (uses cht.sh API) |
-| devdocs | offline; `:DevdocsFetch <slug>` to download |
 
 Backups of prior config land in `~/.config/nvim.bak-<timestamp>`.
