@@ -11,7 +11,7 @@
 
 ### a banger of a config — the kind that replaces VSCode and then some
 
-`113 plugins` · `30 plugin specs` · `42 native modules + 8 toys` · `nvim 0.12+` · `lazy.nvim` · `catppuccin mocha`
+`113 plugins` · `30 plugin specs` · `45 native modules + 8 toys` · `nvim 0.12+` · `lazy.nvim` · `catppuccin mocha`
 
 </div>
 
@@ -21,10 +21,15 @@
 
 A complete Neovim distro tuned to be your **single home in the terminal**. Native LSP for 15+ languages. Two AI surfaces (Copilot inline + Avante chat with Claude). Full git workflow with Magit-style commits, PR review, time-travel, line-by-line blame whispers. Database client, REST client, Kubernetes panel, Jupyter notebooks, Obsidian-style second brain. All running on nvim 0.12 with the modern `vim.lsp.config` API and the maintained `nvim-treesitter` main branch.
 
-On top of that, a **design system** (`lua/user/brand` + `curtain` + `welcome`) and **50 hand-rolled native modules** that turn the editor into something more like a cockpit than a text widget. Two of those modules — **`suggest`** and **`commandeer`** — are the headline:
+On top of that, a **design system** (`lua/user/brand` + `curtain` + `welcome`) and **53 hand-rolled native modules** that turn the editor into something more like a cockpit than a text widget. The whole UI is **mode-reactive**: a single per-mode color (blue NORMAL · green INSERT · mauve VISUAL · red REPLACE · peach COMMAND · teal TERMINAL) drives six surfaces in lockstep — statusline mode capsule, bufferline tab underline, compass HUD chip, cursor block/beam, line number (via modicator), and popup borders (LSP hover/signature, completion menu, telescope). Change mode and six things retune at once.
 
-- **`<Space><Space>`** opens a context-aware action panel. Ranks 4-6 suggestions by what's actually relevant right now (errors, modified buffers, git state, filetype, time of day). Stays open as you work and re-ranks live as state changes. Learns from your picks — actions you take in a given context get a bonus the next time that context appears, and two-action sequences ("fix → commit") build a learned chain.
+Three of those modules — **`suggest`**, **`commandeer`**, and **`playbooks`** — are the headline:
+
+- **`<Space><Space>`** opens a context-aware action panel. Ranks 4-6 suggestions by what's actually relevant right now (errors, modified buffers, git state, filetype, time of day). Stays open as you work and re-ranks live as state changes. Learns from your picks — actions you take in a given context get a bonus the next time that context appears, and two-action sequences ("fix → commit") build a learned chain. Project-scoped: a `.suggest.lua` in any repo adds project-specific actions.
 - **`<leader>`** (with the which-key timeout) shows only context-relevant bindings. In a non-git file you don't see git keymaps. In a Python file you see REPL keys. In a markdown file you see preview/present. **`<leader>?`** escapes to the full reference.
+- **`:Playbooks`** turns learned sequences into named, pinnable chains. If you've done `fix → save → commit` three times, that's a playbook. Name it, pin to `<F2>`, fire the whole chain with one key.
+
+First launch plays a quiet welcome ritual; **`:Tour`** is a 7-slide guided walkthrough you can take any time.
 
 If VSCode does it, this does it — faster, in your terminal, on your keymaps. And then it keeps going.
 
@@ -37,7 +42,7 @@ If VSCode does it, this does it — faster, in your terminal, on your keymaps. A
 3. [What Mason handles for you](#what-mason-handles-for-you-no-brew-needed)
 4. [Per-feature setup](#per-feature-setup)
 5. [Verifying you're set up](#verifying-youre-set-up)
-6. [The two headlines: Suggest + Commandeer](#the-two-headlines--suggest--commandeer)
+6. [The headlines: Suggest, Commandeer, Playbooks, Tour](#the-headlines--suggest--commandeer--playbooks--tour)
 7. [Feature highlights](#feature-highlights)
 8. [VSCode parity table](#vscode-parity-table)
 9. [First-class languages](#first-class-languages)
@@ -46,9 +51,10 @@ If VSCode does it, this does it — faster, in your terminal, on your keymaps. A
 12. [Diagnostic tool — `doctor.sh`](#diagnostic-tool--doctorsh)
 13. [Keymap reference](#keymap-reference)
 14. [The status bar](#the-status-bar)
-15. [Layout / where things live](#layout--where-things-live)
-16. [Customization](#customization)
-17. [Troubleshooting](#troubleshooting)
+15. [The compass HUD](#the-compass-hud)
+16. [Layout / where things live](#layout--where-things-live)
+17. [Customization](#customization)
+18. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -148,9 +154,9 @@ And the better way:
 
 ---
 
-## The two headlines — Suggest + Commandeer
+## The headlines — Suggest · Commandeer · Playbooks · Tour
 
-These are what set this config apart. Read these even if you skip everything else.
+These set this config apart. Read these even if you skip everything else.
 
 ### `<Space><Space>` — `:Suggest`
 
@@ -186,6 +192,78 @@ So `fix → save → commit` really does become a learned chain.
 :SuggestForget    " wipe and start fresh
 ```
 
+#### Self-aware actions
+
+Suggest knows about the rest of the user.* modules and surfaces them at the right moments — not as menu items, as context-relevant suggestions:
+
+| When | Surfaces | Priority |
+|---|---|---|
+| `.toured` marker missing **and** buffer empty (likely fresh launch) | "take the 2-min tour" | 90 |
+| Strong unnamed sequence chains exist (≥5 strength, not yet named) | "name your top playbook" | 40 |
+| ≥3 sequences observed | "browse learned playbooks" | 26 |
+| Today's journal `~/notes/journal/<today>.md` exists | "open today's journal" | 30 |
+| Yesterday's exists but today's doesn't | "open yesterday's journal entry" | 16 |
+| Saved macros count > 0 | "run a saved macro · N available" (live count) | 20 |
+| Cockpit not currently engaged | "engage cockpit (full HUD layout)" | 16 |
+| Total state files > 50MB | "review user state · NMB total" (live size) | 24 |
+| Always (low-priority safety) | "run a quick shell command" | 14 |
+
+These run alongside the standard 29 actions (errors, git, language tools, navigation). The catalog is **38 actions** plus per-project `.suggest.lua` overrides.
+
+So `<Space><Space>` on a brand-new install with no buffers shows:
+
+```
+    1     take the 2-min tour
+    2     restore last session here   (if a snapshot exists)
+    3     find a file
+    4     grep the project
+```
+
+And after a week of use at 6pm in a python project with errors:
+
+```
+    1  ●  fix · NoneType has no attribute foo
+    2     write today's journal entry
+    3     name your top playbook (you have strong unnamed chains)
+    4     save this buffer
+    5     run nearest test
+    6     commit · 2 files changed
+```
+
+Single keystroke, whole-system awareness.
+
+#### Per-project actions via `.suggest.lua`
+
+Drop a file at any project root and Suggest merges its actions into the panel for that project only:
+
+```lua
+-- .suggest.lua
+return {
+  {
+    id    = "deploy",
+    label = "deploy to staging",
+    when  = function(c) return c.in_git and c.git_dirty == 0 and 65 or nil end,
+    run   = function() vim.cmd("Job deploy  make deploy-staging") end,
+  },
+  {
+    id    = "e2e",
+    label = "run e2e suite",
+    when  = function() return 45 end,
+    run   = function() vim.cmd("Job e2e  npm run e2e") end,
+  },
+}
+```
+
+Each entry is `{ id, when(ctx)→priority|nil, label(ctx)→str, run(ctx) }`. Auto-reloaded on mtime change or `DirChanged`. IDs are namespaced internally (`proj.deploy`). Project actions show with a `▸` marker in the panel and get a +5 visibility nudge.
+
+```vim
+:SuggestProject        " inspect what's loaded
+:SuggestProjectEdit    " open or scaffold .suggest.lua
+:SuggestProjectReload  " force re-read
+```
+
+Learning is **project-scoped** — the fingerprint includes the project root name, so a `fix → commit` sequence in repo A doesn't bleed into repo B's suggestions. Sequences (cross-action transitions) stay global because patterns like `fix→save→commit` are universal.
+
 ### `<leader>` (with which-key timeout) — `user.commandeer`
 
 The which-key popup is now context-filtered. Instead of dumping 80+ bindings on you, it shows only the ones relevant to right now.
@@ -198,12 +276,59 @@ The which-key popup is now context-filtered. Instead of dumping 80+ bindings on 
 
 **`<leader>?`** opens the full unfiltered reference any time. **`:CommandeerToggle`** flips a session-level "show all" flag.
 
+**Adaptive learning:** every `<leader>?` escape is observed. The next leader keystroke tells Commandeer what you were *actually* looking for. If you escape ≥3 times in a filetype to reach the same namespace (say `<leader>r*` in a non-Python file), that namespace gets quietly loosened — it stays visible in that filetype going forward. A toast tells you when it happens. `:CommandeerStats` shows what's learned; `:CommandeerReset` wipes it.
+
+### `:Playbooks` — `user.playbooks`
+
+Suggest tracks pairwise sequences (`after X you picked Y` with a count). After three repetitions of a chain, it surfaces in `:Playbooks` (also `<leader>up`) as a discovered playbook. Chip-styled two-row layout per item — same design vocabulary as the suggest panel and compass:
+
+```
+   1   F2   morning routine                 ×7   ← chip row: digit (top=accent, others=surface) + pin (ok-green when pinned) + name (top=bold accent) + strength
+        fix_error  →  save  →  commit            ← chain row, dimmed via BrandSubtext
+   2   F3   ship-it                          ×6
+        format_buffer  →  save  →  run_test
+   3        —                                ×4
+        spotlight  →  swap_other
+   4        —                                ×3
+        grep  →  open_file
+
+   ──────────────────────────────────────────────────────────────────────
+   [n] name   [p] pin to F-key   [u] unpin   [d] delete    [q] close
+```
+
+- **Discovery**: walks the sequence graph from each action's strongest follower (≥3 occurrences), chains up to 5 deep, suppresses sub-chains of longer ones
+- **Names** + **pins** persist to `~/.local/state/nvim/playbooks.json`
+- **Pinning**: pick `<F2>`/`<F3>`/`<F4>`/`<F5>`. The key fires the whole chain — each step runs with a 250ms delay so autocmds/UI events propagate between actions
+- **`d`** hides a chain; **`:PlaybookForget`** un-hides all
+- **`:PlaybookRun <name>`** to fire by name from anywhere
+
+**Live progress toast** when a chain fires — a single replacing notification at the top tracks the chain:
+
+```
+✦  morning routine          [◐ ○ ○ ○]  fix_error     ← step 1 starts (pinned)
+✦  morning routine          [● ◐ ○ ○]  save          ← step 2 starts
+✦  morning routine          [● ● ◐ ○]  run_test      ← step 3 starts
+✓  morning routine          [● ● ● ●]  4 steps       ← done (2.2s fade)
+```
+
+`●` done · `◐` current · `○` pending · `✗` failed (longer timeout so you can read the error). One toast handle that mutates via nvim-notify's `replace` semantics — never piles up.
+
+Emergent behavior, named and operationalized.
+
+### `:Tour` — `user.tour`
+
+7-slide guided walkthrough of the headlines. Brand-styled card with progress dots and slide counter. `n`/`<Space>`/`<Right>` next, `p`/`<Left>` back, `q`/`<Esc>` finish.
+
+First nvim launch surfaces a single notification offering it; `:TourReset` resets the marker if you want it offered again.
+
 ### How they relate
 
-`<Space><Space>` is the *thinking* surface — "here's what makes sense right now."
-`<leader>` is the *doing* surface — "I know what I want to press, just show me the namespace."
+- `<Space><Space>` is the *thinking* surface — "here's what makes sense right now."
+- `<leader>` is the *doing* surface — "I know what I want to press, just show me my namespace."
+- `:Playbooks` is the *automating* surface — "I do this all the time, give me one key."
+- `:Tour` is the *learning* surface — for the first time you (or a new user) sit down.
 
-You'll use both. `<leader>` for muscle memory, `<Space><Space>` when you're not sure what to do next.
+You'll use them in that order over weeks. `<leader>` is muscle memory. `<Space><Space>` is when you're not sure. `:Playbooks` after a month, when patterns have emerged. `:Tour` once, ever, unless you reset it.
 
 ---
 
@@ -418,12 +543,15 @@ Snacks dashboard pops with `good afternoon, joseph.` and three actions. Pick `r`
 ### Headline entry points
 | Module | What it does | Trigger |
 |---|---|---|
-| `suggest`     | Reactive context-aware action panel. Live re-ranking. Persistent learning. | `<Space><Space>` |
-| `commandeer`  | which-key filter that hides irrelevant leader bindings. | `<leader>` (with timeout) |
+| `suggest`     | Reactive context-aware action panel · 38 built-in actions + per-project `.suggest.lua` · self-aware (surfaces tour/playbooks/journal/macros/cockpit/state when relevant) · live re-ranking · project-scoped learning · playbook hints · **preview-on-hover** (cursor on an item shows a one-line target preview via virt_lines — e.g. `commit` → list of dirty filenames, `fix · error` → location+message) · **chip-styled rows** (top item gets accent-bg digit + bold accent label; learned items get green ● chip; project actions get info-blue marker) | `<Space><Space>` |
+| `commandeer`  | which-key filter that hides irrelevant leader bindings · `<leader>?` escapes to full · **adaptive**: loosens rules after 3 escapes to the same namespace | `<leader>` (with timeout) |
+| `playbooks`   | Discovered chains from sequence learning · name + pin to `F2`-`F5` · fire by key | `:Playbooks` / `<leader>up` |
+| `tour`        | 7-slide guided walkthrough of the headlines · first-launch nudge | `:Tour` |
 
 ### Daily-driver tools
 | Module | Command | Keymap | What it does |
 |---|---|---|---|
+| `state`        | `:UserState{,Clear,Export,Import}` | `<leader>us` | Inspect every persistent state file · sizes / ages / descriptions · selective clear · tar export/import across machines |
 | `yankring`     | — | `<leader>p` | Persistent yank history of 50, telescope picker with syntax preview |
 | `ai_cmd`       | `:AI <intent>` | `<leader>ai` | Direct one-shot Anthropic API call with cursor context |
 | `perfhud`      | `:PerfHUD` | `<leader>up` | Live FPS/RSS/LSP req rate/top-5 slowest plugins float |
@@ -449,13 +577,13 @@ Snacks dashboard pops with `good afternoon, joseph.` and three actions. Pick `r`
 | Module | Command | Keymap | What it does |
 |---|---|---|---|
 | `cockpit`      | `:Cockpit` | `<leader>!!` | Engage full HUD layout (symtree L, trouble R, terminal bottom, compass+radar floating) |
-| `compass`      | `:Compass` | `<leader>!c` | Always-on bottom-right widget: mode · cwd · branch · LSP · clock |
+| `compass`      | `:Compass` | `<leader>!c` | Always-on bottom-right HUD, 5 rows of Catppuccin-colored chips, tunes with mode: mode capsule · dir + branch + git status · LSP + diagnostics · cpu/ram telemetry · date + clock + pomo/jobs spinner |
 | `radar`        | `:Radar` | `<leader>!r` | Circular ASCII radar plotting diagnostics + marks by proximity |
 | `throttle`     | `:Throttle` | `<leader>!t` / `<F1>` | 2×N tiled action launcher |
 | `checklist`    | `:Preflight` | `<leader>!p` | Pre-flight checks (working tree clean, on branch, no debug prints, …) |
 | `blackbox`     | `:Blackbox` | `<leader>!b` | Event recorder with timeline browser |
 | `eject`        | `:Eject` | `<leader>!e` | Panic: closes floats, kills jobs, stops webhook, resets layout |
-| `starship`     | (lualine segs) | — | 25-module conditional starship-style statusline |
+| `starship`     | (lualine segs) | — | 30-module starship-style statusline — mode capsule, animated job spinner, pulsing macro REC, LSP/diag/lang capsules, system telemetry |
 
 ### Opt-in / niche (invoked by command)
 | Module | Command | What it does |
@@ -673,16 +801,56 @@ Per-language: Go `<leader>dgt/dgl` · Python `<leader>dpt/dpc/dps`
 
 ## The status bar
 
-Reading left to right with powerline wedges:
+One continuous starship-style chain — the per-mode capsule anchors the left, and every segment from there flows through powerline wedges. The whole line is built in `lua/user/starship.lua` and rendered through lualine.
 
 ```
- NORMAL ◆ joseph@host ◆ nvim ◆ main ↑2 ◆ +3 ~1 -0 ◆ … ◆ file.py @q 3/47 ◆ ⠋ 2 jobs ◆  fmt-off ◆ ◆ ◆ ◆ py .venv 3.12 ◆ ↓1 ◆ direnv ◆ cpu ▂▂▂ 2.5 ◆ ram 67% ◆ 80% ◆ 14:32
+● NORMAL ◆  joseph ◆ nvim ◆ poetry ◆ v0.4.1 ◆  main ↑2 ◆ +3 ~1 -0 ◆  3  1 ◆ 󰒋 lua·tsserver ◆ ⠋ 2 jobs ◆ ↓1 ◆ direnv ◆  file.py ◆ ✦ ◆  3.12  .venv ◆ cpu ▂▂▂ 2.5 ◆ ram 67% ◆ 80% ◆  14:32
 ```
 
-Cut to the essentials. Only segments with *something to say right now* render. The starship-style chains hide modules whose context doesn't apply (no python segment in a `.go` file, no docker segment if there's no Dockerfile, no SSH host unless you're actually remote).
+Cut to the essentials. Only segments with *something to say right now* render. The chain skips empty segments so the visual rhythm stays tight — no python segment in a `.go` file, no docker segment if there's no Dockerfile, no SSH host unless you're actually remote.
 
-**Always-visible:** mode · user · cwd · clock · cpu · ram · battery (when not fully charged)
-**Conditional:** git branch+ahead/behind/stash · git diff stats · ↓updates if behind upstream · direnv · jobs spinner · pomo · overseer counts · autoformat status · Copilot status · python/node/go/rust version · package version · k8s context · cloud account · cmd duration (only after >500ms commands)
+**Mode capsule** — left anchor, per-mode color + glyph + label. Every Vim sub-mode mapped: `● NORMAL · ◐ O-PEND ·  INSERT · 󰒉 VISUAL · 󰒉 V·LINE · 󰒉 V·BLOCK ·  REPLACE ·  COMMAND ·  EX ·  SHELL ·  TERMINAL ·  PROMPT`. The bg color shifts with mode (blue normal → green insert → mauve visual → red replace → peach command → teal terminal) — the whole left half visually retunes when you change mode.
+
+**Mode-reactive accent everywhere** — the same mode color drives the active **bufferline tab underline**, the **compass mode capsule**, the **cursor block/beam** (`Cursor` / `iCursor` / `vCursor` / `rCursor` / `cCursor` / `TermCursor`), and the **popup borders** (`FloatBorder`, `FloatTitle`, blink.cmp menu/doc/signature borders, telescope borders, `LspSignatureActiveParameter`). All wired through one `ModeChanged` autocmd in `user.starship._hook_mode_accent`. Six surfaces breathe together — flip to INSERT and statusline + bufferline + compass + cursor + popups + line number (via modicator) all tune green at once; flip to VISUAL and they all shift mauve. Floats that set their own `winhighlight` (compass, brand panels) keep their existing styling — the mode-accent only affects defaults.
+
+**Diagnostic gutter chips** — `DiagnosticSignError` / `Warn` / `Info` / `Hint` are overridden to chip-style (base fg + severity bg + bold) so the gutter icons render as colored capsules instead of fg-only glyphs. Same color-by-severity vocabulary as the statusline diagnostic chip and compass diagnostics row. Re-applied on `ColorScheme` so theme reloads don't strip it.
+
+**Animated segments** — refresh runs at 10fps so motion reads as smooth:
+- `⠋ N jobs` — braille spinner that advances per frame while `user.jobs` has running tasks; vanishes the instant the queue clears
+- `● REC @q` — pulsing red capsule (500ms period) while recording a macro
+- `✓ saved · file.lua` — save pulse chip after every `BufWritePost`. Bright green for the first 60% of a 1.6s window, then fades to teal for the last 40% — the eye reads the transition as "ack". Flips to red `✗ saved · file` if the write failed. Tiny micro-feedback on the action you do hundreds of times a day.
+- `▶ morning-routine · 2m` — last-fired playbook LED (sapphire while running, green ✓ on done, red ✗ on error). Records the most recent `M.run_chain()` call, fades from the chain after 10 minutes of inactivity — so you remember what just ran without it cluttering the line forever.
+- `♥` / `♡` — session heartbeat. Once a minute, for 200ms, a tiny red heart pulses (lit ♥ for the first 100ms, dim ♡ for the second 100ms) on the right side of the chain. Pure delight detail — signals "the editor is alive" without ever demanding attention. Anchored on `vim.uv.now() % 60000` so it fires deterministically at the top of every minute.
+- `⌨ 2.4k · 47m` — engagement chip on the right side. Tracks keystrokes today (persisted to `~/.local/state/nvim/engagement.json`, resets at midnight) and minutes since this nvim's `VimEnter`. Counts via `vim.on_key`; writes batch to disk every 5s so high-rate input doesn't thrash. Survives nvim restarts within the same calendar day. Format: raw under 1k, `X.Yk` to 10k, `Nk` past that.
+- `🔥 14d` — writing-streak chip. Consecutive calendar days you've launched nvim. Persisted alongside the engagement count. Hidden at streak ≤ 1 (no gloating on day 0/1). Bg color tiers escalate with streak length: surface (2–6 days, subtle) → yellow (7+, week) → peach (14+, two weeks) → mauve (30+, month+). Computed via a strict day-after check (`os.time + 86400`), so a single missed day resets the streak to 1.
+
+**Always-visible:** mode · user · cwd · clock · cpu · ram · battery (when not fully charged) · OS
+**Conditional:** git branch+ahead/behind/stash · git diff stats · diagnostics (severity-colored bg) · LSP clients · ↓updates if behind upstream · direnv · jobs spinner · macro pulse · search match count · pomo · overseer counts · autoformat status · Copilot status · python/node/go/rust version · package version · k8s context · cloud account · cmd duration (only after >500ms commands)
+
+---
+
+## The compass HUD
+
+`:Compass` (or `<leader>!c`) toggles a small floating panel pinned to the bottom-right corner. Five rows of Catppuccin-colored chips, rounded border, `COMPASS` title centered. Refreshes every 250ms.
+
+```
+╭────────── COMPASS ──────────╮
+│ ● NORMAL                    │   mode capsule (per-mode color, mirrors statusline)
+│  nvim   main   ✓         │   dir (sky) · branch (mauve) · git clean/dirty
+│ 󰒋 lua_ls·tsserver    clean │   LSP chip (teal) · diagnostics (severity-colored bg or green "clean")
+│ cpu ▃▃ 1.20    ram 67%      │   system telemetry — bg escalates orange→red on pressure
+│  Wed May 20    14:32      │   date · time · pomo + jobs spinner if active
+╰─────────────────────────────╯
+```
+
+**Design symmetry with the statusline** — pulls `user.starship._mode_defs` for the mode capsule and `user.starship.c` for the color palette, so the same single source of truth drives both surfaces. Diagnostic semantics match (red→yellow→sky→teal by severity, green for "clean"). Spinner uses the same braille frames at the same 80ms phase, so the compass spinner and the statusline spinner animate in lockstep.
+
+**Coloring without statusline syntax** — buffer content can't use lualine's `%#hl#text%*` tags, so chips are colored via `vim.api.nvim_buf_set_extmark` with auto-registered `Compass_<n>` highlight groups (one per unique fg/bg/bold tuple). Same caching pattern as `user.starship.hl()`.
+
+**Reactive details:**
+- **Auto-resize** — width recomputes per tick; window resizes silently when content changes (branch name shrinks, LSP clients attach)
+- **Pressure colors** — cpu chip turns orange above 60% normalized load, red above 85%; ram chip turns orange above 75%, red above 90%; the compass visibly "heats up" when the system does
+- **Conditional extras** — pomo remaining-time and `⠋ N` jobs spinner appear in row 5 only when active
 
 ---
 
@@ -708,9 +876,9 @@ Cut to the essentials. Only segments with *something to say right now* render. T
 │   ├── fun · terminal-hub
 │   └── user-modules            # loads everything under lua/user/
 │
-├── lua/user/                   # 42 native modules — daily-driver tools
-│   ├── (design)        brand · curtain · welcome
-│   ├── (entry points)  suggest · commandeer
+├── lua/user/                   # 45 native modules — daily-driver tools
+│   ├── (design)        brand · curtain · welcome · tour
+│   ├── (entry points)  suggest · commandeer · playbooks · state
 │   ├── (utilities)     yankring · ai_cmd · perfhud · jobs · heatmap · today · spotlight
 │   │                   smartpaste · explain · timetravel · macroreg · coverage · symtree
 │   │                   workspace · repl · pulse · rextest · tsplay · webhook · present
@@ -736,7 +904,11 @@ Cut to the essentials. Only segments with *something to say right now* render. T
 - **Change colorscheme** — edit `lua/plugins/colorscheme.lua` and the `theme = "catppuccin-mocha"` line in `lua/plugins/ui.lua`. Catppuccin lualine themes are named `catppuccin-{mocha,latte,frappe,macchiato}`, not bare `catppuccin`.
 - **Change the accent color** — `lua/user/brand.lua` → `M.c.accent`. Every float, border, key chip, suggest panel marker, prompt — all flow from that one value.
 - **Add a language** — append to `ensure_installed` in `lua/plugins/lsp.lua` (LSP), `lua/plugins/treesitter.lua` (parser), and `formatters_by_ft` in lsp.lua for conform.
-- **Add a Suggest action** — append to the `ACTIONS` table in `lua/user/suggest.lua`. Each entry is `{ id, when(ctx)→priority, label(ctx)→str, run(ctx) }`.
+- **Add a Suggest action globally** — append to the `ACTIONS` table in `lua/user/suggest.lua`. Each entry is `{ id, when(ctx)→priority, label(ctx)→str, run(ctx) }`.
+- **Add a Suggest action per-project** — `:SuggestProjectEdit` from any project root scaffolds a `.suggest.lua` with a template. Same entry shape.
+- **Name + pin a playbook** — open `:Playbooks`, navigate to a row, press `n` to name, `p` to pin to an F-key. Persists across sessions.
+- **Carry your learning between machines** — `:UserStateExport` produces a tarball of Suggest's learning + Playbooks + yankring + macros + tiny_world + workspace snapshots (excluding the encrypted scratchpad and LSP log). `:UserStateImport <path>` restores on the other side.
+- **Selectively reset a single module's state** — `:UserStateClear <id>` (completion lists all 11 ids). Or open `:UserState` and press `c` on a row.
 - **Customize Commandeer filtering** — edit the `RULES` table in `lua/user/commandeer.lua`. Each key is the first char after `<leader>`; value is a function returning true/false based on context.
 - **Customize the throttle launcher** — set `vim.g.throttle_actions` to a list of `{ key, label, icon, run }` entries.
 - **Point Obsidian at an existing vault** — edit the `workspaces` table in `lua/plugins/notes.lua`.
@@ -763,6 +935,12 @@ Cut to the essentials. Only segments with *something to say right now* render. T
 | Want to nuke and restart | `rm -rf ~/.local/share/nvim ~/.local/state/nvim ~/.cache/nvim` (config in `~/.config/nvim` survives) |
 | Suggest panel feels stuck | `:SuggestForget` wipes learned state; reopens fresh |
 | Too many bindings in which-key | `:CommandeerToggle` flips between context-filtered and show-all |
+| Tour was offered but I missed it | `:Tour` runs it from anywhere |
+| Want a brand new user to see the tour | `:TourReset` clears the marker; next launch surfaces the nudge |
+| Playbooks panel is empty | Fire 3+ matching sequences via `:Suggest` — chains discovered after that |
+| `.suggest.lua` not loading | `:SuggestProject` shows path + actions; `:SuggestProjectReload` to force re-read |
+| Not sure where my data lives | `:UserState` lists every state file with size + age + description |
+| LSP log eating disk | `:UserState` shows its size; `:UserStateClear lsp_log` wipes it |
 
 ---
 

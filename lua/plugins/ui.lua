@@ -243,26 +243,34 @@ return {
             statusline = { "dashboard", "alpha", "starter", "snacks_dashboard" },
             winbar = { "dashboard", "alpha", "starter", "neo-tree", "Trouble", "trouble", "snacks_dashboard" },
           },
-          refresh = { statusline = 200 },
+          -- 100ms refresh = 10fps. Smooth enough for the spinner + macro pulse
+          -- but still cheap: every starship segment is TTL-cached, so a refresh
+          -- is just string concat over pre-computed values.
+          refresh = { statusline = 100 },
         },
         sections = {
-          -- A: mode (powerline wedge into B)
-          lualine_a = { { "mode", fmt = function(s) return " " .. s end } },
-          -- B: starship-style left chain (user@host  cwd  branch + ahead/behind  diff stats)
+          -- A/B emptied — mode now lives inside the starship left chain so the
+          -- entire left half is one continuous powerline (no theme-color seam
+          -- between the lualine_a mode block and the starship chain).
+          lualine_a = {},
           lualine_b = { starship_left },
-          -- C: file-level info — diagnostics, filename, macro, search, noice
+          -- C: file-level info — filetype + filename + noice. Macro, search,
+          -- and diagnostics moved into starship_left (live as colored capsules
+          -- inside the chain, severity-bg for diag, pulsing red for macro).
           lualine_c = {
-            { "diagnostics",
-              symbols = { error = " ", warn = " ", info = " ", hint = "󰌵 " },
-              diagnostics_color = {
-                error = { fg = colors.red }, warn = { fg = colors.yellow },
-                info = { fg = colors.sky }, hint = { fg = colors.teal },
-              } },
             { "filetype", icon_only = true, separator = "", padding = { left = 1, right = 0 } },
             { "filename", path = 1, symbols = { modified = "  ", readonly = " ", unnamed = "[No Name]" } },
-            macro,
-            search,
-            { function() local ok, n = pcall(require, "noice"); return ok and n.api.status.command.has() and n.api.status.command.get() or "" end },
+            -- Noice cmdline echo. The cmdline can legitimately contain `%`
+            -- (filename register, :%s/.../, etc.) which the statusline parser
+            -- interprets as a format directive — `% ` (percent + space) then
+            -- triggers `E539: Illegal character < >`. Escape `%` to `%%`
+            -- before lualine hands it to nvim_win_set_option.
+            { function()
+                local ok, n = pcall(require, "noice")
+                local s = ok and n.api.status.command.has() and n.api.status.command.get() or ""
+                if type(s) ~= "string" then return "" end
+                return (s:gsub("%%", "%%%%"))
+            end },
           },
           -- X: live indicators — only what's *currently happening*. Everything
           -- else is hidden until it has something to say. Restraint > density.

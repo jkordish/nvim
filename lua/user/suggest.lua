@@ -157,6 +157,12 @@ local function ctx()
   }
 end
 
+-- Forward declarations — definitions live further down (lines ~540, ~551).
+-- Lua locals declared via `local function` aren't visible to earlier code in
+-- the same scope, so without these, `fingerprint()` resolves project_name
+-- as a global (nil) and crashes on first :Suggest call.
+local find_project_root, project_name
+
 -- A short string identifying the situation. Same situation = same fingerprint.
 -- Project name is the leading segment so learning stays project-scoped:
 -- a `fix → commit` sequence in repo A doesn't bleed into repo B's suggestions.
@@ -394,6 +400,141 @@ local ACTIONS = {
     label = function() return "browse yank ring" end,
     run = function() require("user.yankring").pick() end,
   },
+
+  -- ─── self-aware: actions that surface our own user.* modules ────────────
+  {
+    id = "take_tour",
+    when = function(c)
+      -- Only when tour hasn't been seen AND buffer is empty (likely fresh launch)
+      if vim.uv.fs_stat(vim.fn.stdpath("state") .. "/.toured") then return nil end
+      return c.name == "" and 90 or nil
+    end,
+    label = function() return "take the 2-min tour" end,
+    run = function() require("user.tour").start() end,
+  },
+  {
+    id = "name_playbook",
+    when = function()
+      -- Are there strong, unnamed sequences we could name?
+      local seqs = state.sequences or {}
+      local strong = 0
+      for _, trans in pairs(seqs) do
+        for _, count in pairs(trans) do if count >= 5 then strong = strong + 1 end end
+      end
+      if strong == 0 then return nil end
+      local f = io.open(vim.fn.stdpath("state") .. "/playbooks.json", "r")
+      local named = 0
+      if f then
+        local ok, parsed = pcall(vim.json.decode, f:read("*a")); f:close()
+        if ok and parsed then named = vim.tbl_count(parsed.names or {}) end
+      end
+      return strong > named and 40 or nil
+    end,
+    label = function() return "name your top playbook (you have strong unnamed chains)" end,
+    run = function() require("user.playbooks").show() end,
+  },
+  {
+    id = "playbooks_panel",
+    when = function()
+      local seqs = state.sequences or {}
+      local n = 0
+      for _, trans in pairs(seqs) do
+        for _, c in pairs(trans) do if c >= 3 then n = n + 1 end end
+      end
+      return n >= 3 and 26 or nil
+    end,
+    label = function() return "browse learned playbooks" end,
+    run = function() require("user.playbooks").show() end,
+  },
+  {
+    id = "open_journal",
+    when = function()
+      local p = vim.fn.expand("~/notes/journal/" .. os.date("%Y-%m-%d") .. ".md")
+      return vim.uv.fs_stat(p) and 30 or nil
+    end,
+    label = function() return "open today's journal entry" end,
+    run = function()
+      local p = vim.fn.expand("~/notes/journal/" .. os.date("%Y-%m-%d") .. ".md")
+      vim.cmd("edit " .. vim.fn.fnameescape(p))
+    end,
+  },
+  {
+    id = "open_yesterday_journal",
+    when = function()
+      local today = vim.fn.expand("~/notes/journal/" .. os.date("%Y-%m-%d") .. ".md")
+      if vim.uv.fs_stat(today) then return nil end   -- prefer today's if it exists
+      local yesterday = vim.fn.expand("~/notes/journal/" .. os.date("%Y-%m-%d", os.time() - 86400) .. ".md")
+      return vim.uv.fs_stat(yesterday) and 16 or nil
+    end,
+    label = function() return "open yesterday's journal entry" end,
+    run = function()
+      vim.cmd("edit " .. vim.fn.fnameescape(vim.fn.expand("~/notes/journal/" .. os.date("%Y-%m-%d", os.time() - 86400) .. ".md")))
+    end,
+  },
+  {
+    id = "run_macro",
+    when = function()
+      local f = io.open(vim.fn.stdpath("state") .. "/macros.json", "r"); if not f then return nil end
+      local ok, parsed = pcall(vim.json.decode, f:read("*a")); f:close()
+      local n = (ok and parsed) and vim.tbl_count(parsed) or 0
+      return n > 0 and 20 or nil
+    end,
+    label = function()
+      local f = io.open(vim.fn.stdpath("state") .. "/macros.json", "r")
+      local n = 0
+      if f then local ok, p = pcall(vim.json.decode, f:read("*a")); f:close(); n = (ok and p) and vim.tbl_count(p) or 0 end
+      return ("run a saved macro · %d available"):format(n)
+    end,
+    run = function() require("user.macroreg").pick() end,
+  },
+  {
+    id = "engage_cockpit",
+    when = function()
+      local ok, cockpit = pcall(require, "user.cockpit")
+      if not ok then return nil end
+      if cockpit.status and cockpit.status() then return nil end  -- already engaged
+      return 16
+    end,
+    label = function() return "engage cockpit (full HUD layout)" end,
+    run = function() require("user.cockpit").engage() end,
+  },
+  {
+    id = "review_state",
+    when = function()
+      local total = 0
+      local dir = vim.fn.stdpath("state")
+      for _, n in ipairs({ "suggest_state.json", "playbooks.json", "yankring.json",
+                           "macros.json", "tiny_world.json", "commandeer_state.json", "lsp.log" }) do
+        local s = vim.uv.fs_stat(dir .. "/" .. n)
+        if s then total = total + s.size end
+      end
+      local mb = math.floor(total / 1024 / 1024)
+      return mb >= 50 and 24 or nil
+    end,
+    label = function()
+      local total = 0
+      local dir = vim.fn.stdpath("state")
+      for _, n in ipairs({ "suggest_state.json", "playbooks.json", "yankring.json",
+                           "macros.json", "tiny_world.json", "commandeer_state.json", "lsp.log" }) do
+        local s = vim.uv.fs_stat(dir .. "/" .. n); if s then total = total + s.size end
+      end
+      return ("review user state · %dMB total"):format(math.floor(total / 1024 / 1024))
+    end,
+    run = function() require("user.state").show() end,
+  },
+  {
+    id = "quick_shell",
+    when = function() return 14 end,
+    label = function() return "run a quick shell command" end,
+    run = function()
+      vim.ui.input({ prompt = "shell> " }, function(cmd)
+        if not cmd or cmd == "" then return end
+        require("toggleterm.terminal").Terminal:new({
+          cmd = cmd, direction = "float", close_on_exit = false,
+        }):toggle()
+      end)
+    end,
+  },
 }
 
 -- ─── per-project actions (.suggest.lua) ───────────────────────────────────
@@ -402,7 +543,8 @@ local ACTIONS = {
 -- Re-read on mtime change. Tied to cwd, so switching projects swaps them.
 local _project = { cwd = nil, mtime = 0, path = nil, actions = {} }
 
-local function find_project_root(cwd)
+-- Definitions assign into the forward-declared locals (no `local` keyword).
+function find_project_root(cwd)
   local dir = cwd
   for _ = 1, 8 do
     if vim.uv.fs_stat(dir .. "/.git") or vim.uv.fs_stat(dir .. "/.suggest.lua") then return dir end
@@ -413,7 +555,7 @@ local function find_project_root(cwd)
   return cwd
 end
 
-local function project_name(cwd)
+function project_name(cwd)
   local root = find_project_root(cwd) or cwd
   return vim.fn.fnamemodify(root, ":t")
 end
@@ -555,6 +697,54 @@ end
 -- ─── live panel ────────────────────────────────────────────────────────────
 local panel = { win = nil, buf = nil, items = {}, augroup = nil, debounce = nil, last_fp = nil }
 local NS = vim.api.nvim_create_namespace("user_suggest")
+local PREVIEW_NS = vim.api.nvim_create_namespace("user_suggest_preview")
+
+-- Per-action preview generator. Returns a string snippet that describes WHAT
+-- the action would target right now, given the live context. Cheap — must
+-- never block (no shell-outs, no LSP requests). Unknown action ids return
+-- nil so no preview virt_line renders.
+local function compute_preview(item, c)
+  local id = item.action and item.action.id or ""
+  if id == "fix_error" or id == "next_diag" then
+    local diags = c.diags or {}
+    if #diags == 0 then return nil end
+    local first = vim.tbl_filter(function(d) return d.severity == 1 end, diags)[1] or diags[1]
+    if not first then return nil end
+    local short = (first.message or ""):gsub("\n.*", ""):sub(1, 48)
+    return string.format("→ %s:%d  %s", c.short_name or "?", (first.lnum or 0) + 1, short)
+  elseif id == "save" then
+    local lines = vim.api.nvim_buf_line_count(0)
+    return string.format("→ %s  ·  %d line%s", c.short_name or "?", lines, lines == 1 and "" or "s")
+  elseif id == "commit" or id == "lazygit" then
+    if not c.in_git then return nil end
+    -- List up to 3 dirty filenames (cwd-relative, basenames only for fit)
+    local files = vim.fn.systemlist("git -C " .. vim.fn.shellescape(vim.fn.getcwd()) .. " diff --name-only HEAD 2>/dev/null")
+    if #files == 0 then files = vim.fn.systemlist("git -C " .. vim.fn.shellescape(vim.fn.getcwd()) .. " ls-files --others --exclude-standard 2>/dev/null") end
+    if #files == 0 then return nil end
+    local short = {}
+    for i, f in ipairs(files) do
+      if i > 3 then break end
+      table.insert(short, vim.fn.fnamemodify(f, ":t"))
+    end
+    local suffix = #files > 3 and (" +" .. (#files - 3) .. " more") or ""
+    return "→ " .. table.concat(short, ", ") .. suffix
+  elseif id == "test_nearest" or id == "test_file" then
+    return string.format("→ neotest will run against %s", c.short_name or "?")
+  elseif id == "open_readme" then
+    return "→ README in project root"
+  elseif id == "open_env" then
+    return "→ .env / .envrc in project root"
+  elseif id == "browse_url" then
+    return "→ open URL under cursor in browser"
+  elseif id == "swap_other_file" then
+    return "→ jump to test ↔ source pair"
+  elseif id == "snap_workspace" then
+    return "→ save current layout to session snapshot"
+  elseif id == "pomo_break" then
+    return "→ pause / take a break"
+  end
+  return nil  -- no preview for this action
+end
 
 local function teardown_autocmds()
   if panel.augroup then
@@ -575,21 +765,56 @@ local function close()
   panel.win, panel.buf, panel.items, panel.last_fp = nil, nil, {}, nil
 end
 
+-- Render the focused item's preview as a virt_line below it. Cursor-driven;
+-- called on render() and on CursorMoved. Cheap idempotent — clears the
+-- previous virt_line every call, then sets at most one new one.
+local function render_preview()
+  if not (panel.buf and vim.api.nvim_buf_is_valid(panel.buf)) then return end
+  vim.api.nvim_buf_clear_namespace(panel.buf, PREVIEW_NS, 0, -1)
+  if not (panel.item_rows and panel.last_ctx) then return end
+  -- Map cursor row → focused item index. Cursor is 1-based; item_rows is 0-based.
+  local cur = (panel.win and vim.api.nvim_win_is_valid(panel.win))
+    and vim.api.nvim_win_get_cursor(panel.win)[1] - 1
+    or panel.item_rows[1]
+  local focused_idx
+  for i, row in ipairs(panel.item_rows) do
+    if row <= cur then focused_idx = i else break end
+  end
+  if not focused_idx then focused_idx = 1 end
+  local item = panel.items[focused_idx]
+  if not item then return end
+  local preview = compute_preview(item, panel.last_ctx)
+  if not preview or preview == "" then return end
+  pcall(vim.api.nvim_buf_set_extmark, panel.buf, PREVIEW_NS, panel.item_rows[focused_idx], 0, {
+    virt_lines = { { { "           " .. preview, "BrandSubtext" } } },
+    virt_lines_above = false,
+  })
+end
+
 local function render(c, items)
   if not (panel.buf and vim.api.nvim_buf_is_valid(panel.buf)) then return end
   panel.items = items
+  panel.last_ctx = c
+  panel.item_rows = {}
   vim.api.nvim_buf_clear_namespace(panel.buf, NS, 0, -1)
+  vim.api.nvim_buf_clear_namespace(panel.buf, PREVIEW_NS, 0, -1)
 
   -- The top item's predicted-next gets a hint line directly under it.
+  -- Each row layout: "  [ N ] [ ● ] [▸] label"
+  --   ` N ` digit chip (3 cols: space + digit + space)  — accent for top, surface for rest
+  --   ` ● ` learned chip (3 cols)                       — ok-green, omitted if not learned
+  --   `▸`  project-action marker                        — info-blue, omitted if not project
   local lines = { "" }
   for i, it in ipairs(items) do
-    local marker = it.learned and "●" or " "
-    local origin = it.is_project and "▸ " or ""
-    table.insert(lines, string.format("    %d  %s  %s%s", i, marker, origin, it.label))
+    local digit = (" %d "):format(i)                                  -- ` 1 ` (3 cols)
+    local learned = it.learned     and " ● " or "   "                 -- chip or 3 spaces
+    local origin  = it.is_project  and "▸ "  or "  "                  -- 2 cols
+    table.insert(lines, string.format("  %s %s %s%s", digit, learned, origin, it.label))
+    panel.item_rows[i] = #lines - 1  -- record 0-indexed row of this item for preview targeting
     -- Only show the playbook hint on the #1 ranked suggestion to avoid noise
     if i == 1 and it.next_hint then
       local hint_label = action_label(it.next_hint.id, c)
-      table.insert(lines, string.format("         ↳ then usually: %s   (×%d)", hint_label, it.next_hint.count))
+      table.insert(lines, string.format("           ↳ then usually: %s   (×%d)", hint_label, it.next_hint.count))
     end
   end
   table.insert(lines, "")
@@ -607,22 +832,42 @@ local function render(c, items)
   vim.api.nvim_buf_set_lines(panel.buf, 0, -1, false, lines)
   vim.bo[panel.buf].modifiable = false
 
-  -- Walk the rendered lines, highlighting the number key, learned marker,
-  -- and predicted-next hint. We re-scan with patterns so the offsets stay
-  -- correct even when the playbook hint inserts an extra line.
+  -- Walk the rendered lines and apply chip-style highlights via extmarks.
+  -- New row layout: "  [ N ] [ ● ] [▸] label"
+  --   chars 2..4   : digit chip ` N ` (BrandChipAccent on top, BrandChipSurface otherwise)
+  --   chars 6..8   : learned chip ` ● ` (BrandChipOk) — only when learned
+  --   project marker `▸` if present (BrandInfo)
+  --   `↳ then usually...` hint line dimmed via BrandSubtext
+  --   divider/legend/subtitle dimmed via BrandMuted
+  local digit_row = 0  -- counts which item row we're on (for top-item detection)
   for r, line in ipairs(lines) do
-    local row = r - 1  -- 0-indexed for extmarks
-    -- "    N  ●  ..." → highlight the digit + the marker
-    local n_start = line:find("^%s+(%d)%s")
-    if n_start then
-      local digit_col = #line:match("^(%s+)") -- count leading spaces
-      pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, digit_col, {
-        end_col = digit_col + 1, hl_group = "BrandAccent",
+    local row = r - 1  -- 0-indexed
+    local digit_match = line:match("^%s%s(%s%d%s)%s")  -- " 1 " at cols 3-5 (0-indexed: 2..4)
+    if digit_match then
+      digit_row = digit_row + 1
+      local is_top = (digit_row == 1)
+      -- Digit chip: cols 2..5 (3-col block)
+      pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, 2, {
+        end_col = 5, hl_group = is_top and "BrandChipAccent" or "BrandChipSurface",
       })
-      local marker_col = line:find("●", 1, true)
-      if marker_col then
-        pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, marker_col - 1, {
-          end_col = marker_col + 2, hl_group = "BrandOk",   -- ● is multi-byte
+      -- Learned chip: cols 6..9 (3-col block). Only paint when the marker exists.
+      if line:find("●", 6, true) then
+        pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, 6, {
+          end_col = 9, hl_group = "BrandChipOk",
+        })
+      end
+      -- Project marker `▸` after the chips
+      local proj_col = line:find("▸", 9, true)
+      if proj_col then
+        pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, proj_col - 1, {
+          end_col = proj_col + 2, hl_group = "BrandInfo",
+        })
+      end
+      -- Top item gets a bold accent label so the eye lands on it first
+      if is_top then
+        local label_start = line:find("%S", 11) or 11
+        pcall(vim.api.nvim_buf_set_extmark, panel.buf, NS, row, label_start - 1, {
+          end_line = row + 1, hl_group = "BrandAccent",
         })
       end
     end
@@ -747,6 +992,16 @@ function M.show()
       callback = schedule_rerender,
     })
   end
+  -- Preview-on-hover: re-render the per-item preview every time the cursor
+  -- moves within the panel buffer. Scoped via `buffer = panel.buf` so the
+  -- autocmd doesn't fire for cursor moves in other windows.
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = panel.augroup,
+    buffer = panel.buf,
+    callback = render_preview,
+  })
+  -- Initial preview for the top item — fires before the cursor has moved
+  vim.schedule(render_preview)
 end
 
 function M.stats()

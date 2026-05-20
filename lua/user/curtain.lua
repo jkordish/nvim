@@ -30,8 +30,20 @@ function M.open(buf, target_opts)
   local step = 0
   local timer = vim.uv.new_timer()
   local interval = math.floor(DURATION / STEPS)
+  -- Single guarded close: the timer is repeating and `schedule_wrap` defers
+  -- callbacks onto the main loop, so several callbacks can already be queued
+  -- by the time we decide to stop. Without the guard, the queued callbacks
+  -- re-enter and call close() on an already-closing handle ("handle is
+  -- already closing" — spammed once per remaining queued tick).
+  local function stop_timer()
+    if timer and not timer:is_closing() then
+      timer:stop(); timer:close()
+    end
+    timer = nil
+  end
   timer:start(interval, interval, vim.schedule_wrap(function()
-    if not vim.api.nvim_win_is_valid(win) then timer:stop(); timer:close(); return end
+    if not timer then return end  -- already torn down by a prior tick
+    if not vim.api.nvim_win_is_valid(win) then stop_timer(); return end
     step = step + 1
     local t = ease_out_quad(step / STEPS)
     local w = math.floor(start_w + (target_w - start_w) * t)
@@ -49,7 +61,7 @@ function M.open(buf, target_opts)
         row = target_opts.row, col = target_opts.col,
         width = target_w, height = target_h,
       })
-      timer:stop(); timer:close()
+      stop_timer()
     end
   end))
 
@@ -69,8 +81,15 @@ function M.close(win)
   local step = 0
   local timer = vim.uv.new_timer()
   local interval = math.floor(DURATION / STEPS)
+  local function stop_timer()
+    if timer and not timer:is_closing() then
+      timer:stop(); timer:close()
+    end
+    timer = nil
+  end
   timer:start(interval, interval, vim.schedule_wrap(function()
-    if not vim.api.nvim_win_is_valid(win) then timer:stop(); timer:close(); return end
+    if not timer then return end
+    if not vim.api.nvim_win_is_valid(win) then stop_timer(); return end
     step = step + 1
     local t = ease_out_quad(step / STEPS)
     local w = math.floor(cur_w + (end_w - cur_w) * t)
@@ -83,7 +102,7 @@ function M.close(win)
     })
     if step >= STEPS then
       pcall(vim.api.nvim_win_close, win, true)
-      timer:stop(); timer:close()
+      stop_timer()
     end
   end))
 end

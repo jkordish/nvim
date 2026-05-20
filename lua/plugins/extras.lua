@@ -45,19 +45,12 @@ return {
         -- three actions you actually open nvim to do. Recent files and the
         -- git pane appear underneath, quietly. No version chest-thumping.
         preset = {
-          -- A small, kerned wordmark instead of the giant ASCII banner.
-          header = function()
-            local brand = require("user.brand")
-            local greet = brand.greeting()
-            local user  = (vim.env.USER or ""):match("^[^.]+") or ""
-            return table.concat({
-              "",
-              "         ◆  nvim",
-              "",
-              "         " .. greet .. (user ~= "" and (", " .. user) or "") .. ".",
-              "",
-            }, "\n")
-          end,
+          -- Newer snacks requires preset.header to be a string, not a function
+          -- (format_field passes it through `"%s":format()`, then block() does
+          -- `text[1]:find(...)` which crashes on functions). The dynamic
+          -- greeting now lives in a custom function-section below — same look,
+          -- works on the current snacks API.
+          header = "",
           keys = {
             { icon = "  ", key = "f", desc = "find a file",        action = ":Telescope find_files" },
             { icon = "  ", key = "g", desc = "grep the project",   action = ":Telescope live_grep" },
@@ -69,7 +62,26 @@ return {
           },
         },
         sections = {
-          { section = "header" },
+          -- Custom dynamic greeting — replaces the old preset.header function.
+          -- A function-section returns text on every dashboard open, so the
+          -- greeting + username can stay dynamic (time-of-day aware).
+          function()
+            local greet, user
+            local ok, brand = pcall(require, "user.brand")
+            greet = (ok and brand.greeting and brand.greeting()) or "welcome back"
+            user = (vim.env.USER or ""):match("^[^.]+") or ""
+            return {
+              align = "center",
+              padding = 1,
+              text = table.concat({
+                "",
+                "◆  nvim",
+                "",
+                greet .. (user ~= "" and (", " .. user) or "") .. ".",
+                "",
+              }, "\n"),
+            }
+          end,
           { section = "keys", gap = 1, padding = 1 },
           { section = "recent_files", icon = "  ", title = "recent", indent = 4, padding = { 1, 1 }, limit = 5 },
           { pane = 2, icon = "  ", title = "git", section = "terminal",

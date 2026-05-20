@@ -79,34 +79,89 @@ function M.discover()
 end
 
 -- ─── execution ─────────────────────────────────────────────────────────────
+-- Builds a one-line progress string with dots showing chain state:
+--   ✦  morning routine        [● ◐ ○ ○]  save
+-- ● done · ◐ current · ○ pending · ✗ failed
+local function progress_line(chain, step, status, name)
+  local glyph = status == "done" and "✓"
+             or status == "error" and "✗"
+             or "✦"
+  local dots = {}
+  for i = 1, #chain do
+    if i < step or status == "done" then table.insert(dots, "●")
+    elseif i == step and status == "error" then table.insert(dots, "✗")
+    elseif i == step then table.insert(dots, "◐")
+    else table.insert(dots, "○") end
+  end
+  local trailing = chain[step] or "—"
+  if status == "done"  then trailing = ("%d step%s"):format(#chain, #chain == 1 and "" or "s") end
+  return string.format("%s  %-22s [%s]  %s",
+    glyph, name:sub(1, 22), table.concat(dots, " "), trailing)
+end
+
+-- Module-level: most recently fired playbook. The statusline LED reads this
+-- via M.last_fired() and renders a chip that fades after LED_TTL_SECONDS.
+M._last_fired = nil
+local LED_TTL_SECONDS = 600  -- 10 minutes
+
+function M.last_fired()
+  if not M._last_fired then return nil end
+  if (os.time() - M._last_fired.ts) > LED_TTL_SECONDS then
+    M._last_fired = nil
+    return nil
+  end
+  return M._last_fired
+end
+
 function M.run_chain(chain, opts)
   opts = opts or {}
+  local quiet = opts.quiet == true
+  local key  = chain_key(chain)
+  local name = meta.names[key] or "playbook"
+
+  -- Record the fire for the statusline LED. Status flips done/error as the
+  -- chain progresses so the LED can show outcome too.
+  M._last_fired = { name = name, key = key, chain = chain, ts = os.time(), status = "running" }
+
+  -- Persistent notification handle that we mutate as the chain progresses
+  local handle = nil
+  local function toast(text, level, replace, timeout)
+    if quiet then return end
+    local ok, ret = pcall(vim.notify, text, level or vim.log.levels.INFO, {
+      title   = "playbook",
+      replace = replace,
+      timeout = timeout,         -- false = pinned, number = ms before fade
+    })
+    if ok then return ret end
+  end
+
+  -- Open the persistent toast right away
+  handle = toast(progress_line(chain, 1, "running", name), vim.log.levels.INFO, nil, false)
+
   local suggest = require("user.suggest")
   local i = 0
   local function step()
     i = i + 1
     if i > #chain then
-      pcall(function()
-        require("user.brand").notify(("playbook complete · %d steps"):format(#chain),
-          nil, { title = "playbook" })
-      end)
+      handle = toast(progress_line(chain, #chain, "done", name), vim.log.levels.INFO, handle, 2200)
+      if M._last_fired then M._last_fired.status = "done"; M._last_fired.ts = os.time() end
       return
     end
+    handle = toast(progress_line(chain, i, "running", name), vim.log.levels.INFO, handle, false)
+
     local action = suggest.find_action(chain[i])
     if not action then
-      pcall(function()
-        require("user.brand").notify(("step %d (%s) not found · stopped"):format(i, chain[i]),
-          vim.log.levels.WARN, { title = "playbook" })
-      end)
+      handle = toast(progress_line(chain, i, "error", name) .. "  · action not found",
+        vim.log.levels.ERROR, handle, 5000)
+      if M._last_fired then M._last_fired.status = "error"; M._last_fired.ts = os.time() end
       return
     end
     local c = suggest.context()
     local ok, err = pcall(action.run, c)
     if not ok then
-      pcall(function()
-        require("user.brand").notify(("step %d (%s) failed · %s"):format(i, chain[i], err),
-          vim.log.levels.ERROR, { title = "playbook" })
-      end)
+      handle = toast(progress_line(chain, i, "error", name) .. "  · " .. tostring(err):sub(1, 60),
+        vim.log.levels.ERROR, handle, 5000)
+      if M._last_fired then M._last_fired.status = "error"; M._last_fired.ts = os.time() end
       return
     end
     vim.defer_fn(step, STEP_DELAY_MS)
@@ -188,7 +243,15 @@ local function render(items)
   state.items = items
   vim.api.nvim_buf_clear_namespace(state.buf, NS, 0, -1)
 
+  -- Chip-styled layout, matching the suggest panel's design vocabulary:
+  --   "  [ N ] [F2 ] name                ×7"   ← row 1 (chips + label)
+  --   "         save → test_nearest → commit"  ← row 2 (chain, dimmed)
+  -- Each item takes 2 buffer rows. Digit chip mirrors suggest (accent for top,
+  -- surface for others). Pin chip mirrors learned-marker styling (ok-green
+  -- when pinned, blank otherwise). Chain on its own line keeps the top row
+  -- short + readable; the chain row goes dim via BrandSubtext.
   local lines = { "" }
+  state.chip_rows = {}  -- map item index → 0-indexed row for highlight targeting
   if #items == 0 then
     table.insert(lines, "        no playbooks discovered yet.")
     table.insert(lines, "")
@@ -198,16 +261,19 @@ local function render(items)
     for i, it in ipairs(items) do
       local key = chain_key(it.chain)
       local pin = pinned_label_for(key)
+      local pin_chip = pin and (" " .. pin:gsub("[<>]", "") .. " ") or "     "  -- " F2 " or 5 spaces
       local name = meta.names[key] or "—"
-      -- format: "  N  <pin>  <name>  · step → step → step  · ×N"
+      if #name > 26 then name = name:sub(1, 24) .. "…" end
+      -- Row 1: chip block + name + strength
+      table.insert(lines, string.format("  %s %s  %-26s  ×%d",
+        (" %d "):format(i),   -- 3-col digit chip
+        pin_chip,              -- 4-col pin chip
+        name,
+        it.strength))
+      state.chip_rows[i] = #lines - 1
+      -- Row 2: chain steps, dimmed
       local chain_visual = table.concat(it.chain, "  →  ")
-      table.insert(lines, string.format("    %d  %-5s  %-18s  %s    ×%d",
-        i,
-        pin and "[" .. pin:gsub("[<>]", "") .. "]" or "     ",
-        name:sub(1, 18),
-        chain_visual,
-        it.strength
-      ))
+      table.insert(lines, "         " .. chain_visual)
     end
   end
   table.insert(lines, "")
@@ -219,37 +285,45 @@ local function render(items)
   vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
   vim.bo[state.buf].modifiable = false
 
-  -- Highlights
+  -- Chip-styled highlights. Iterate items directly (not by line pattern) so
+  -- column math stays exact and the design language matches the suggest panel.
+  for i, it in ipairs(items) do
+    local row = state.chip_rows[i]
+    if row then
+      local is_top = (i == 1)
+      local key = chain_key(it.chain)
+      local pinned = pinned_label_for(key) ~= nil
+      -- Digit chip "  N  ": cols 2..5 (3 bytes — " N ")
+      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 2, {
+        end_col = 5, hl_group = is_top and "BrandChipAccent" or "BrandChipSurface",
+      })
+      -- Pin chip " F2 ": cols 6..10 (4 bytes — " F2 "). Only colored when pinned.
+      if pinned then
+        pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 6, {
+          end_col = 10, hl_group = "BrandChipOk",
+        })
+      end
+      -- Name in bold accent for top item; default text for others. Name starts
+      -- at col 12 (2 spaces after the pin chip block).
+      if is_top then
+        pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 12, {
+          end_line = row + 1, hl_group = "BrandAccent",
+        })
+      end
+      -- Chain row directly below — dim via BrandSubtext, arrows stay readable
+      local chain_row = row + 1
+      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, chain_row, 0, {
+        end_line = chain_row + 1, hl_group = "BrandSubtext",
+      })
+    end
+  end
+  -- Empty-state lines + divider + footer dimmed
   for r, line in ipairs(lines) do
     local row = r - 1
-    -- digit prefix in accent
-    local digit = line:match("^%s+(%d)%s")
-    if digit then
-      local col = #line:match("^(%s+)")
-      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, col,
-        { end_col = col + 1, hl_group = "BrandAccent" })
-    end
-    -- pin brackets in ok-green
-    local pin_s, pin_e = line:find("%[F%d%]")
-    if pin_s then
-      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, pin_s - 1,
-        { end_col = pin_e, hl_group = "BrandOk" })
-    end
-    -- → arrows in subtext
-    local a_s = 1
-    while true do
-      local s2, e2 = line:find("→", a_s, true)
-      if not s2 then break end
-      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, s2 - 1,
-        { end_col = e2, hl_group = "BrandSubtext" })
-      a_s = e2 + 1
-    end
-    -- divider + footer
     if line:find("^%s+─") or line:find("^%s+%[n%]") then
       pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 0,
         { end_line = row + 1, hl_group = "BrandMuted" })
     end
-    -- empty-state lines
     if #items == 0 and (line:find("^%s+no playbooks") or line:find("^%s+pick a few")) then
       pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 0,
         { end_line = row + 1, hl_group = "BrandMuted" })
@@ -267,10 +341,23 @@ local function render(items)
 end
 
 local function selected_item()
-  local row = vim.api.nvim_win_get_cursor(state.win)[1]
-  -- Items start at row 2 (after blank), so row-1 is the index
-  local idx = row - 1
-  return state.items[idx]
+  if not state.chip_rows then return nil end
+  local cursor_row = vim.api.nvim_win_get_cursor(state.win)[1] - 1  -- 0-indexed
+  -- Each item now spans two rows (chip + chain). Find the item whose chip row
+  -- or chain row contains the cursor.
+  local focused_idx
+  for i, chip_row in ipairs(state.chip_rows) do
+    if chip_row <= cursor_row and cursor_row <= chip_row + 1 then
+      focused_idx = i
+      break
+    elseif chip_row > cursor_row then
+      break
+    else
+      focused_idx = i  -- still closest above
+    end
+  end
+  if not focused_idx then return nil end
+  return state.items[focused_idx]
 end
 
 function M.show()
@@ -279,7 +366,8 @@ function M.show()
   local items = M.discover()
 
   local W = 78
-  local H = math.max(8, #items + 6)
+  -- Each item is now 2 rows (chip + chain); +6 for header/divider/footer/blank
+  local H = math.max(8, #items * 2 + 6)
 
   local r = require("user.brand").win({
     title = "playbooks",

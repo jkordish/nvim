@@ -39,6 +39,46 @@ end
 -- ─── modules (segments). Each returns {text, fg} or {"", nil} when inactive ──
 M.modules = {}
 
+-- ─── MODE ─────────────────────────────────────────────────────────────────
+-- Per-mode capsule: glyph + label + mode color. Replaces lualine's built-in
+-- so the mode lives inside the same powerline chain as everything else.
+local MODE_DEFS = {
+  ["n"]   = { label = "NORMAL",   icon = "●",  bg = "blue"     },
+  ["no"]  = { label = "O-PEND",   icon = "◐",  bg = "blue"     },
+  ["nov"] = { label = "O-PEND",   icon = "◐",  bg = "blue"     },
+  ["noV"] = { label = "O-PEND",   icon = "◐",  bg = "blue"     },
+  ["niI"] = { label = "NORMAL·i", icon = "●",  bg = "blue"     },
+  ["niR"] = { label = "NORMAL·R", icon = "●",  bg = "blue"     },
+  ["i"]   = { label = "INSERT",   icon = "",  bg = "green"    },
+  ["ic"]  = { label = "INSERT",   icon = "",  bg = "green"    },
+  ["ix"]  = { label = "INSERT",   icon = "",  bg = "green"    },
+  ["v"]   = { label = "VISUAL",   icon = "󰒉",  bg = "mauve"    },
+  ["V"]   = { label = "V·LINE",   icon = "󰒉",  bg = "mauve"    },
+  ["\22"] = { label = "V·BLOCK",  icon = "󰒉",  bg = "mauve"    },
+  ["s"]   = { label = "SELECT",   icon = "󰒉",  bg = "mauve"    },
+  ["S"]   = { label = "S·LINE",   icon = "󰒉",  bg = "mauve"    },
+  ["\19"] = { label = "S·BLOCK",  icon = "󰒉",  bg = "mauve"    },
+  ["R"]   = { label = "REPLACE",  icon = "",  bg = "red"      },
+  ["Rv"]  = { label = "V·REPL",   icon = "",  bg = "red"      },
+  ["Rx"]  = { label = "REPLACE",  icon = "",  bg = "red"      },
+  ["c"]   = { label = "COMMAND",  icon = "",  bg = "peach"    },
+  ["cv"]  = { label = "EX",       icon = "",  bg = "peach"    },
+  ["r"]   = { label = "PROMPT",   icon = "",  bg = "sapphire" },
+  ["rm"]  = { label = "MORE",     icon = "",  bg = "sapphire" },
+  ["r?"]  = { label = "CONFIRM",  icon = "",  bg = "sapphire" },
+  ["!"]   = { label = "SHELL",    icon = "",  bg = "yellow"   },
+  ["t"]   = { label = "TERMINAL", icon = "",  bg = "teal"     },
+  ["nt"]  = { label = "TERMINAL", icon = "",  bg = "teal"     },
+}
+M._mode_defs = MODE_DEFS  -- expose for other modules (e.g. for mode-aware accents)
+
+function M.modules.mode()
+  local m = vim.api.nvim_get_mode().mode
+  local def = MODE_DEFS[m] or MODE_DEFS[m:sub(1, 1)] or MODE_DEFS["n"]
+  return { text = (" %s %s "):format(def.icon, def.label),
+           fg = M.c.base, bg = M.c[def.bg], gui = "bold" }
+end
+
 -- USERNAME / HOST (always visible)
 function M.modules.user()
   local user = vim.env.USER or "user"
@@ -423,6 +463,313 @@ function M.modules.pomo()
   return { text = ("  %s %s "):format(t:remaining_time_str(), t.name or ""), fg = M.c.base, bg = M.c.peach, gui = "bold" }
 end
 
+-- ─── SPINNER ──────────────────────────────────────────────────────────────
+-- Animated frames when user.jobs has running tasks. Frame index derives from
+-- vim.uv.now() so all callers stay phase-locked. Lualine's refresh tick is
+-- what advances it visually (see refresh.statusline = 100 in ui.lua).
+local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+local function spin_frame()
+  return SPINNER[(math.floor(vim.uv.now() / 80) % #SPINNER) + 1]
+end
+
+function M.modules.spinner()
+  local ok, jobs = pcall(require, "user.jobs")
+  if not ok or not jobs.tasks then return { text = "" } end
+  local STATUS = jobs.STATUS or {}
+  local running = 0
+  for _, t in pairs(jobs.tasks()) do
+    if t.status == (STATUS.RUNNING or "running") then running = running + 1 end
+  end
+  if running == 0 then return { text = "" } end
+  return { text = (" %s %d job%s "):format(spin_frame(), running, running > 1 and "s" or ""),
+           fg = M.c.base, bg = M.c.sapphire, gui = "bold" }
+end
+
+-- ─── LSP CLIENTS ──────────────────────────────────────────────────────────
+-- Connected LSP servers for the current buffer, dot-separated. Hidden in
+-- special buftypes (terminal, prompt, etc.).
+function M.modules.lsp()
+  local bt = vim.api.nvim_get_option_value("buftype", { buf = 0 })
+  if bt ~= "" then return { text = "" } end
+  local clients = vim.lsp.get_clients({ bufnr = 0 })
+  if #clients == 0 then return { text = "" } end
+  local names = {}
+  for _, c in ipairs(clients) do
+    -- Trim common suffixes so "lua_ls" → "lua", "rust_analyzer" → "rust_analyzer"
+    local n = (c.name or "?"):gsub("_ls$", "")
+    table.insert(names, n)
+  end
+  return { text = (" 󰒋 %s "):format(table.concat(names, "·")),
+           fg = M.c.base, bg = M.c.teal, gui = "bold" }
+end
+
+-- ─── DIAGNOSTICS ──────────────────────────────────────────────────────────
+-- Buffer-scoped diagnostic capsule. Bg = highest severity color so the line
+-- visually escalates with problem severity.
+function M.modules.diag()
+  local d = vim.diagnostic.count(0)
+  local e, w, i, h = d[1] or 0, d[2] or 0, d[3] or 0, d[4] or 0
+  if e + w + i + h == 0 then return { text = "" } end
+  local parts = {}
+  if e > 0 then table.insert(parts, ("  %d"):format(e)) end
+  if w > 0 then table.insert(parts, ("  %d"):format(w)) end
+  if i > 0 then table.insert(parts, ("  %d"):format(i)) end
+  if h > 0 then table.insert(parts, (" 󰌵 %d"):format(h)) end
+  local bg
+  if e > 0 then bg = M.c.red
+  elseif w > 0 then bg = M.c.yellow
+  elseif i > 0 then bg = M.c.sky
+  else bg = M.c.teal end
+  return { text = " " .. table.concat(parts, " ") .. " ",
+           fg = M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── MACRO RECORDING ──────────────────────────────────────────────────────
+-- Pulsing red capsule while recording. Pulse period = 500ms (slower than the
+-- spinner) so the eye reads it as urgent but not jittery.
+function M.modules.macro()
+  local reg = vim.fn.reg_recording()
+  if reg == "" then return { text = "" } end
+  local lit = (math.floor(vim.uv.now() / 500) % 2) == 0
+  local icon = lit and "●" or "○"
+  return { text = (" %s REC @%s "):format(icon, reg),
+           fg = M.c.base, bg = M.c.red, gui = "bold" }
+end
+
+-- ─── SAVE PULSE ───────────────────────────────────────────────────────────
+-- Brief "✓ saved · file.lua" chip after every BufWritePost. Fades after
+-- PULSE_MS via lualine's own refresh tick (no separate timer needed). Color
+-- flips red+message on save errors so it doubles as a write-failed indicator.
+M._save_pulse = nil  -- { until_ms, name, ok }
+local PULSE_MS = 1600
+
+function M._hook_save_pulse()
+  local grp = vim.api.nvim_create_augroup("user_starship_save_pulse", { clear = true })
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = grp,
+    callback = function(ev)
+      local name = vim.fn.fnamemodify(ev.file or "", ":t")
+      if name == "" then return end
+      M._save_pulse = { until_ms = vim.uv.now() + PULSE_MS, name = name, ok = true }
+    end,
+  })
+  -- Catch failed writes too (BufWriteCmd errors / readonly attempts)
+  vim.api.nvim_create_autocmd({ "BufWritePre" }, {
+    group = grp,
+    callback = function(ev)
+      -- Sentinel: clear stale pulse so failed writes start clean
+      if M._save_pulse and (vim.uv.now() > M._save_pulse.until_ms) then
+        M._save_pulse = nil
+      end
+    end,
+  })
+end
+
+function M.modules.save_pulse()
+  local p = M._save_pulse
+  if not p then return { text = "" } end
+  local remaining = p.until_ms - vim.uv.now()
+  if remaining <= 0 then
+    M._save_pulse = nil
+    return { text = "" }
+  end
+  -- Two-phase visual: full bright green for first 60% of window, then dim
+  -- for the last 40% as a subtle fade-out — eye reads the transition.
+  local total = PULSE_MS
+  local phase_bright = remaining > (total * 0.4)
+  local bg = p.ok and (phase_bright and M.c.green or M.c.teal) or M.c.red
+  local icon = p.ok and "✓" or "✗"
+  local name = p.name
+  if #name > 22 then name = name:sub(1, 20) .. "…" end
+  return { text = (" %s saved · %s "):format(icon, name),
+           fg = M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── ENGAGEMENT ───────────────────────────────────────────────────────────
+-- "⌨ 2.4k · 47m" chip: keystrokes today (persisted across sessions, resets
+-- daily) + minutes since this nvim's VimEnter. vim.on_key counts every typed
+-- key; writes batch to disk every 5s to avoid thrash.
+M._engage = { keys_today = 0, date = nil, session_start_ms = nil,
+               streak = 0, last_active = nil }
+local function _engage_path() return vim.fn.stdpath("state") .. "/engagement.json" end
+
+-- Returns true if `b_date` is the calendar day immediately after `a_date`.
+-- Strict day-after means: dates parse as 1 day apart (handles month boundaries
+-- via os.time + 86400 round-trip).
+local function _day_after(a, b)
+  if not a or not b then return false end
+  local ay, am, ad = a:match("^(%d%d%d%d)-(%d%d)-(%d%d)$")
+  if not ay then return false end
+  local a_ts = os.time({ year = tonumber(ay), month = tonumber(am), day = tonumber(ad), hour = 12 })
+  local expected = os.date("%Y-%m-%d", a_ts + 86400)
+  return expected == b
+end
+
+local function _engage_load()
+  local f = io.open(_engage_path(), "r")
+  if not f then return end
+  local raw = f:read("*a") or "{}"
+  f:close()
+  local ok, data = pcall(vim.json.decode, raw)
+  if not (ok and type(data) == "table") then return end
+  local today = os.date("%Y-%m-%d")
+  if data.date == today then M._engage.keys_today = tonumber(data.keys) or 0 end
+  M._engage.date = today
+  -- Streak bookkeeping. Bump on first load of a new day, reset if a day gapped.
+  local last = data.last_active
+  local prev_streak = tonumber(data.streak) or 0
+  if last == today then
+    M._engage.streak = prev_streak                 -- already counted today
+  elseif _day_after(last, today) then
+    M._engage.streak = prev_streak + 1             -- continuous: extend
+  else
+    M._engage.streak = 1                           -- first day or gap: restart
+  end
+  M._engage.last_active = today
+end
+
+local function _engage_save()
+  local f = io.open(_engage_path(), "w")
+  if not f then return end
+  f:write(vim.json.encode({
+    date        = M._engage.date,
+    keys        = M._engage.keys_today,
+    streak      = M._engage.streak,
+    last_active = M._engage.last_active,
+  }))
+  f:close()
+end
+
+local _engage_save_pending = false
+local function _engage_schedule_save()
+  if _engage_save_pending then return end
+  _engage_save_pending = true
+  vim.defer_fn(function() _engage_save(); _engage_save_pending = false end, 5000)
+end
+
+function M._hook_engagement()
+  _engage_load()
+  if not M._engage.date then M._engage.date = os.date("%Y-%m-%d") end
+  M._engage.session_start_ms = vim.uv.now()
+  vim.on_key(function(_, typed)
+    if not typed or #typed == 0 then return end
+    -- Roll over at midnight
+    local today = os.date("%Y-%m-%d")
+    if today ~= M._engage.date then
+      _engage_save()  -- persist yesterday's final count before reset
+      M._engage.date = today
+      M._engage.keys_today = 0
+    end
+    M._engage.keys_today = M._engage.keys_today + 1
+    _engage_schedule_save()
+  end)
+  vim.api.nvim_create_autocmd("VimLeavePre", { callback = _engage_save })
+end
+
+local function _fmt_count(n)
+  if n < 1000 then return tostring(n) end
+  if n < 10000 then return string.format("%.1fk", n / 1000) end  -- 1.5k, 9.9k
+  return string.format("%dk", math.floor(n / 1000))              -- 10k, 47k, 234k
+end
+
+function M.modules.engage()
+  if not M._engage.session_start_ms then return { text = "" } end
+  local mins = math.floor((vim.uv.now() - M._engage.session_start_ms) / 60000)
+  return { text = (" ⌨ %s · %dm "):format(_fmt_count(M._engage.keys_today), mins),
+           fg = M.c.text, bg = M.c.surface }
+end
+
+-- Streak chip — consecutive days used. Hidden at streak ≤ 1 (no gloating on
+-- day 0/1; chip emerges day 2 onward to mark genuine continuity).
+function M.modules.streak()
+  local s = M._engage.streak or 0
+  if s <= 1 then return { text = "" } end
+  -- Color escalates with streak length so longer streaks pop visually.
+  local bg
+  if s >= 30 then bg = M.c.mauve         -- "month+" — top tier
+  elseif s >= 14 then bg = M.c.peach     -- "two weeks" — hot
+  elseif s >= 7 then bg = M.c.yellow     -- "week" — warm
+  else bg = M.c.surface end              -- 2-6 days — subtle
+  return { text = (" 🔥 %dd "):format(s),
+           fg = (bg == M.c.surface) and M.c.text or M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── DIAGNOSTIC SIGN CHIPS ────────────────────────────────────────────────
+-- Override default DiagnosticSign* groups so the gutter signs render as
+-- severity-colored chips (base fg + severity bg, bold) instead of fg-only
+-- glyphs. The existing diagnostic config in lsp.lua provides the icons;
+-- this hook just retints them. Re-applied on ColorScheme so theme reloads
+-- don't strip the chips.
+function M._hook_diag_chips()
+  local grp = vim.api.nvim_create_augroup("user_starship_diag_chips", { clear = true })
+  local function apply()
+    local set = function(g, opts) pcall(vim.api.nvim_set_hl, 0, g, opts) end
+    set("DiagnosticSignError", { fg = M.c.base, bg = M.c.red,    bold = true })
+    set("DiagnosticSignWarn",  { fg = M.c.base, bg = M.c.yellow, bold = true })
+    set("DiagnosticSignInfo",  { fg = M.c.base, bg = M.c.sky,    bold = true })
+    set("DiagnosticSignHint",  { fg = M.c.base, bg = M.c.teal,   bold = true })
+    -- Older Catppuccin uses the *_Sign suffix or no suffix; cover both.
+    set("DiagnosticError",     { fg = M.c.red })
+    set("DiagnosticWarn",      { fg = M.c.yellow })
+    set("DiagnosticInfo",      { fg = M.c.sky })
+    set("DiagnosticHint",      { fg = M.c.teal })
+  end
+  vim.api.nvim_create_autocmd("ColorScheme", { group = grp, callback = apply })
+  vim.schedule(apply)
+end
+
+-- ─── HEARTBEAT ────────────────────────────────────────────────────────────
+-- Once a minute, a faint ♥/♡ pulses in the chain for 200ms. Pure delight
+-- detail — signals "the editor is alive" without ever demanding attention.
+-- The 200ms window is anchored on a 60s minute mark from vim.uv.now() so it
+-- fires deterministically (not on every 0.1s tick).
+function M.modules.heartbeat()
+  local now = vim.uv.now()
+  local since_minute = now % 60000
+  if since_minute > 200 then return { text = "" } end
+  -- Two frames inside the 200ms window: ♥ for first half, ♡ for second half
+  local lit = since_minute < 100
+  return { text = " " .. (lit and "♥" or "♡") .. " ",
+           fg = M.c.red, bg = M.c.surface }
+end
+
+-- ─── PLAYBOOK LED ─────────────────────────────────────────────────────────
+-- Shows the most recently fired playbook name + age, color-coded by outcome
+-- (running=sapphire, done=green, error=red). Fades from the chain after 10
+-- minutes (driven by playbooks.last_fired() returning nil past TTL).
+local function fmt_age(secs)
+  if secs < 60 then return tostring(secs) .. "s" end
+  if secs < 3600 then return tostring(math.floor(secs / 60)) .. "m" end
+  return tostring(math.floor(secs / 3600)) .. "h"
+end
+
+function M.modules.playbook_led()
+  local ok, pb = pcall(require, "user.playbooks")
+  if not ok or not pb.last_fired then return { text = "" } end
+  local last = pb.last_fired()
+  if not last then return { text = "" } end
+  local age = os.time() - last.ts
+  local bg, icon
+  if last.status == "running" then bg, icon = M.c.sapphire, "▶"
+  elseif last.status == "error" then bg, icon = M.c.red, "✗"
+  else bg, icon = M.c.green, "✓" end
+  -- Truncate long playbook names so the chain doesn't explode
+  local name = last.name or "playbook"
+  if #name > 20 then name = name:sub(1, 18) .. "…" end
+  return { text = (" %s %s · %s "):format(icon, name, fmt_age(age)),
+           fg = M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── SEARCH MATCHES ───────────────────────────────────────────────────────
+-- "[3/47]" while a /-search is active. Cheap; reuses searchcount.
+function M.modules.search()
+  if vim.v.hlsearch == 0 then return { text = "" } end
+  local ok, sc = pcall(vim.fn.searchcount, { recompute = 1, maxcount = 999 })
+  if not ok or not sc or not sc.total or sc.total == 0 then return { text = "" } end
+  return { text = (" 󰍉 %d/%d "):format(sc.current or 0, sc.total),
+           fg = M.c.base, bg = M.c.flamingo, gui = "bold" }
+end
+
 -- USER PROMPT (root indicator)
 function M.modules.user_short()
   local user = vim.env.USER or "user"
@@ -430,6 +777,73 @@ function M.modules.user_short()
   local bg = is_root and M.c.red or M.c.lavender
   local prefix = is_root and "# " or " "
   return { text = (prefix .. "%s "):format(user), fg = M.c.base, bg = bg, gui = "bold" }
+end
+
+-- ─── mode-reactive bufferline accent ──────────────────────────────────────
+-- Retints the bufferline's selected-buffer underline + indicator to match the
+-- current mode color. So switching to INSERT shifts the active tab's
+-- underline green, REPLACE shifts it red, VISUAL shifts it mauve — the whole
+-- UI (statusline + compass + bufferline) breathes together with mode.
+function M._hook_mode_accent()
+  local grp = vim.api.nvim_create_augroup("user_starship_mode_accent", { clear = true })
+  local function apply()
+    local mode = vim.api.nvim_get_mode().mode
+    local def = MODE_DEFS[mode] or MODE_DEFS[mode:sub(1, 1)] or MODE_DEFS.n
+    local accent = M.c[def.bg]
+    -- All highlights via pcall so plugin order doesn't break us.
+    local set = function(group, opts)
+      pcall(vim.api.nvim_set_hl, 0, group, opts)
+    end
+    set("BufferLineBufferSelected",      { fg = M.c.text,  sp = accent, underline = true, bold = true })
+    set("BufferLineIndicatorSelected",   { fg = accent,    sp = accent })
+    set("BufferLineNumbersSelected",     { fg = M.c.text,  sp = accent, underline = true, bold = true })
+    set("BufferLineModifiedSelected",    { fg = M.c.peach, sp = accent, underline = true })
+    set("BufferLineDiagnosticSelected",  { fg = accent,    sp = accent, underline = true, bold = true })
+    set("BufferLineErrorSelected",       { fg = M.c.red,   sp = accent, underline = true, bold = true })
+    set("BufferLineWarningSelected",     { fg = M.c.yellow,sp = accent, underline = true, bold = true })
+    set("BufferLineInfoSelected",        { fg = M.c.sky,   sp = accent, underline = true })
+    set("BufferLineHintSelected",        { fg = M.c.teal,  sp = accent, underline = true })
+    set("BufferLineErrorDiagnosticSelected",   { fg = M.c.red,    sp = accent, underline = true, bold = true })
+    set("BufferLineWarningDiagnosticSelected", { fg = M.c.yellow, sp = accent, underline = true, bold = true })
+    set("BufferLineInfoDiagnosticSelected",    { fg = M.c.sky,    sp = accent, underline = true })
+    set("BufferLineHintDiagnosticSelected",    { fg = M.c.teal,   sp = accent, underline = true })
+    set("BufferLineCloseButtonSelected", { fg = accent,    sp = accent, underline = true })
+    set("BufferLinePickSelected",        { fg = accent,    sp = accent, underline = true, bold = true })
+    set("BufferLineSeparatorSelected",   { fg = M.c.base,  bg = M.c.base })
+    -- Cursor itself — most-watched pixel on screen. Retinting Cursor +
+    -- per-mode variants means the cursor shifts color with mode along with
+    -- statusline/bufferline/compass. Default guicursor maps every mode to
+    -- one of these so a single autocmd covers all of them.
+    set("Cursor",                        { fg = M.c.base,  bg = accent })
+    set("iCursor",                       { fg = M.c.base,  bg = accent })
+    set("vCursor",                       { fg = M.c.base,  bg = accent })
+    set("rCursor",                       { fg = M.c.base,  bg = accent })
+    set("cCursor",                       { fg = M.c.base,  bg = accent })
+    set("lCursor",                       { fg = M.c.base,  bg = accent })
+    set("TermCursor",                    { fg = M.c.base,  bg = accent })
+    -- Popup / float borders — completes the color-flow story by extending it
+    -- into hover docs, signature help, diagnostics floats, completion menu,
+    -- and signature popups. fg-only so backgrounds stay readable, and floats
+    -- that set their own winhighlight (compass, brand panels) are unaffected.
+    set("FloatBorder",                   { fg = accent })
+    set("FloatTitle",                    { fg = accent, bold = true })
+    set("NormalFloatBorder",             { fg = accent })
+    set("DiagnosticFloatingError",       { fg = M.c.red })
+    set("BlinkCmpMenuBorder",            { fg = accent })
+    set("BlinkCmpDocBorder",             { fg = accent })
+    set("BlinkCmpSignatureHelpBorder",   { fg = accent })
+    set("BlinkCmpMenuSelection",         { bg = M.c.surface, fg = accent, bold = true })
+    set("LspSignatureActiveParameter",   { fg = accent, bold = true })
+    -- Telescope (if installed) — only border fg, never background
+    set("TelescopeBorder",               { fg = accent })
+    set("TelescopePromptBorder",         { fg = accent })
+    set("TelescopeResultsBorder",        { fg = accent })
+    set("TelescopePreviewBorder",        { fg = accent })
+    set("TelescopePromptTitle",          { fg = M.c.base, bg = accent, bold = true })
+  end
+  vim.api.nvim_create_autocmd("ModeChanged", { group = grp, callback = apply })
+  vim.api.nvim_create_autocmd("ColorScheme", { group = grp, callback = apply })
+  vim.schedule(apply)
 end
 
 -- ─── cmd_duration timing hook (CmdlineEnter → CmdlineLeave) ────────────────
@@ -473,16 +887,21 @@ function M.chain(segments, opts)
   for _, seg in ipairs(segments) do
     if seg.text and seg.text ~= "" then
       local seg_hl = hl(seg.fg, seg.bg, seg.gui)
+      -- Defense in depth: escape literal `%` inside chip text so user-supplied
+      -- strings (filenames, branch names, playbook names) can never produce a
+      -- malformed statusline format directive ("% " → E539). Our `%#hl#`
+      -- markers are added BY this function, after escaping, so they survive.
+      local safe_text = (seg.text:gsub("%%", "%%%%"))
       if side == "left" then
         if prev_bg then
           table.insert(out, "%#" .. sep_hl(prev_bg, seg.bg) .. "#" .. sep_l)
         end
-        table.insert(out, "%#" .. seg_hl .. "#" .. seg.text)
+        table.insert(out, "%#" .. seg_hl .. "#" .. safe_text)
       else
         if prev_bg then
           table.insert(out, "%#" .. sep_hl(seg.bg, prev_bg) .. "#" .. sep_r)
         end
-        table.insert(out, "%#" .. seg_hl .. "#" .. seg.text)
+        table.insert(out, "%#" .. seg_hl .. "#" .. safe_text)
       end
       prev_bg = seg.bg
     end
@@ -496,8 +915,14 @@ function M.chain(segments, opts)
 end
 
 -- ─── public helpers: pre-composed left/right halves ─────────────────────────
+-- Anchor with the per-mode capsule so the whole left half flows from the
+-- mode color outward. Macro/search/diag/lsp/spinner appear conditionally —
+-- the chain skips empty segments so the visual rhythm stays tight.
 function M.left()
   return M.chain({
+    M.modules.mode(),          -- per-mode capsule (replaces lualine_a "mode")
+    M.modules.macro(),         -- pulsing "REC @q" while recording
+    M.modules.search(),        -- "[n/total]" during /-search
     M.modules.os(),
     M.modules.user_short(),
     M.modules.ssh(),           -- only if remote
@@ -506,6 +931,11 @@ function M.left()
     M.modules.package_version(),
     M.modules.git(),
     M.modules.gitdiff(),
+    M.modules.diag(),          -- buffer diagnostics (severity-colored bg)
+    M.modules.lsp(),           -- connected LSP clients
+    M.modules.spinner(),       -- animated when user.jobs has running tasks
+    M.modules.save_pulse(),    -- "✓ saved · file" chip for 1.6s after BufWritePost
+    M.modules.playbook_led(),  -- last fired playbook (fades after 10 min)
     M.modules.update(),        -- "↓N" if behind upstream
     M.modules.direnv(),        -- only if .envrc loaded
   }, { side = "left" })
@@ -513,6 +943,9 @@ end
 
 function M.right()
   return M.chain({
+    M.modules.heartbeat(),     -- once-a-minute 200ms ♥/♡ pulse
+    M.modules.engage(),        -- "⌨ 2.4k · 47m" — keys today + session minutes
+    M.modules.streak(),        -- "🔥 14d" — consecutive days (hidden ≤ 1)
     M.modules.cmd_duration(),  -- "took 2.4s" after slow cmds
     M.modules.ai(),
     M.modules.pomo(),
@@ -534,6 +967,10 @@ end
 
 function M.setup()
   M._hook_cmd_timing()
+  M._hook_mode_accent()
+  M._hook_save_pulse()
+  M._hook_engagement()
+  M._hook_diag_chips()
 end
 
 return M

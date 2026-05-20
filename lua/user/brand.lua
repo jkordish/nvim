@@ -65,6 +65,15 @@ local function apply_hl()
   set(0, "BrandErr",         { fg = M.c.err })
   set(0, "BrandInfo",        { fg = M.c.info })
   set(0, "BrandSignature",   { fg = M.c.muted, italic = true })
+  -- Chip tokens — colored capsules for use inside buffer content via extmarks.
+  -- Pair with a leading + trailing space character so the bg block reads as a
+  -- pill rather than a tight box around the text.
+  set(0, "BrandChipAccent",  { fg = M.c.bg,   bg = M.c.accent, bold = true })
+  set(0, "BrandChipSurface", { fg = M.c.text, bg = M.c.surface, bold = true })
+  set(0, "BrandChipOk",      { fg = M.c.bg,   bg = M.c.ok,     bold = true })
+  set(0, "BrandChipWarn",    { fg = M.c.bg,   bg = M.c.warn,   bold = true })
+  set(0, "BrandChipErr",     { fg = M.c.bg,   bg = M.c.err,    bold = true })
+  set(0, "BrandChipInfo",    { fg = M.c.bg,   bg = M.c.info,   bold = true })
 end
 
 -- ─── window builder ────────────────────────────────────────────────────────

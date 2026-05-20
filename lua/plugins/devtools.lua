@@ -81,6 +81,11 @@ return {
   -- ─────────────────────────────────────────────────────────────────────
   {
     "Ramilito/kubectl.nvim",
+    -- Requires Go + Cargo on PATH. The plugin's Makefile builds a Go static
+    -- archive (libkubectl_go.a) then a Rust release binary that loads as
+    -- kubectl_client.dylib at require() time. Without this build step the
+    -- plugin crashes on first :Kubectl with "module 'kubectl_client' not found".
+    build = "make build",
     cmd = { "Kubectl", "Kubectx", "Kubens" },
     keys = {
       { "<leader>k", function() require("kubectl").toggle() end, desc = "Kubectl panel" },

@@ -18,7 +18,7 @@ return {
     },
     opts = {
       enabled = false, -- start OFF; toggle with <leader>ta
-      execution_message = { message = function() return "" end, dim = 0.2, cleaning_interval = 1500 },
+      -- execution_message removed upstream — silence its complaint
       trigger_events = {
         immediate_save = { "BufLeave", "FocusLost" },
         defer_save = { "InsertLeave", "TextChanged" },
