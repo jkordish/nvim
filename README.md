@@ -46,30 +46,67 @@ If VSCode does it, this does it — faster, in your terminal, on your keymaps.
 
 ## Install — one shot
 
-Copy-paste this whole block. Safe to re-run; brew skips what's installed.
+The fastest way: clone the config and run `install.sh`. Works on **macOS** (via Homebrew, installs it if needed) and **Ubuntu/Debian/Pop/Mint LTS** (via apt + GitHub release fallbacks for tools apt doesn't ship).
 
 ```bash
-# ─── REQUIRED: editor + tools the config depends on ───────────
-brew install neovim ripgrep fd tree-sitter tree-sitter-cli git node
+git clone <this-repo> ~/.config/nvim     # or copy the dir manually
+cd ~/.config/nvim
+./install.sh                              # interactive, recommended
+```
 
-# ─── HIGHLY RECOMMENDED: unlocks most features ────────────────
-brew install lazygit pngpaste yazi gh jq
-brew install --cask font-jetbrains-mono-nerd-font   # icons everywhere
-brew install --cask ghostty                          # inline image rendering
+The script:
+1. Detects your OS (macOS or Ubuntu LTS)
+2. Installs the package manager if missing (Homebrew on macOS)
+3. Installs **required** tools (neovim, ripgrep, fd, tree-sitter, git, node, jq)
+4. Installs **recommended** tools (lazygit, yazi, gh, pngpaste/xclip, JetBrainsMono Nerd Font)
+5. Prompts per language for **toolchains** (python, go, rust, docker)
+6. Prompts for **optional extras** (Ghostty, Quarto+Jupyter, glow)
+7. Backs up any existing `~/.config/nvim` to `*.bak-<timestamp>`
+8. Runs Lazy sync, compiles every Treesitter parser, installs every Mason tool
+9. Verifies the install and prints next steps
 
-# ─── LANGUAGE TOOLCHAINS: install only what you write ─────────
-brew install python go rustup
-rustup-init -y                                       # finishes rust install
-brew install --cask docker                           # for devcontainer.nvim
+**Flags:**
 
-# ─── OPTIONAL: Jupyter notebook support ───────────────────────
-brew install quarto
-pip install --user pynvim jupyter_client cairosvg pnglatex \
-                   plotly kaleido pyperclip nbformat
-# inside nvim afterwards:  :UpdateRemotePlugins + restart
+| Flag | Purpose |
+|---|---|
+| `--yes` / `-y`     | Accept every prompt, fully unattended |
+| `--minimal`        | Required tools only, skip recommended + languages |
+| `--skip-system`    | Skip OS package installs — just re-bootstrap plugins (use after a config change) |
+| `--skip-bootstrap` | Skip nvim plugin bootstrap — just install OS deps |
+| `--dry-run`        | Print what would run, don't execute |
+| `-h` / `--help`    | Show help |
 
-# ─── OPTIONAL: devdocs.io preview renderer ────────────────────
-brew install glow
+**Examples:**
+```bash
+./install.sh --yes                    # zero-prompt full install
+./install.sh --minimal --yes          # bare minimum, quick start
+./install.sh --skip-system            # bootstrap only — after pulling config changes
+./install.sh --dry-run                # see what it would do
+```
+
+### If you'd rather install manually
+
+Same packages the script handles — copy-paste this block:
+
+```bash
+# macOS
+brew install neovim ripgrep fd tree-sitter tree-sitter-cli git node jq \
+             lazygit pngpaste yazi gh
+brew install --cask font-jetbrains-mono-nerd-font ghostty
+brew install python go rustup && rustup-init -y
+brew install --cask docker
+brew install quarto glow
+pip install --user pynvim jupyter_client cairosvg pnglatex plotly kaleido pyperclip nbformat
+
+# Ubuntu / Debian / Pop / Mint LTS
+sudo apt-get update
+sudo apt-get install -y ripgrep fd-find git nodejs npm jq curl wget \
+                        python3 python3-pip python3-venv build-essential
+sudo ln -sf $(which fdfind) /usr/local/bin/fd
+# neovim 0.11+ via official AppImage (apt's nvim is usually too old)
+curl -L -o /tmp/nvim.tgz https://github.com/neovim/neovim/releases/latest/download/nvim-linux64.tar.gz
+sudo tar -C /opt -xzf /tmp/nvim.tgz && sudo ln -sf /opt/nvim-linux64/bin/nvim /usr/local/bin/nvim
+# tree-sitter, lazygit, yazi, gh, etc. — see install.sh for the GitHub-release recipes
 ```
 
 ## After install

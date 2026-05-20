@@ -109,7 +109,33 @@ return {
       vim.opt.foldenable = true
     end,
     opts = {
-      provider_selector = function() return { "lsp", "treesitter" } end,
+      -- Skip UFO entirely for buftypes/filetypes where neither LSP nor
+      -- treesitter can fold (terminals, dashboards, pickers, no-name buffers).
+      -- Returning "" or false makes ufo use the buffer's foldmethod fallback;
+      -- nil disables ufo for that buffer.
+      provider_selector = function(bufnr, filetype, buftype)
+        local skip_buftype = { terminal = true, nofile = true, prompt = true, quickfix = true, help = true }
+        local skip_filetype = {
+          ["snacks_dashboard"] = true, alpha = true, dashboard = true, starter = true,
+          ["snacks_picker_list"] = true, ["snacks_picker_input"] = true, ["snacks_notif"] = true,
+          ["snacks_terminal"] = true, ["snacks_scratch"] = true,
+          TelescopePrompt = true, ["TelescopeResults"] = true, ["TelescopePreview"] = true,
+          ["neo-tree"] = true, ["neo-tree-popup"] = true, NvimTree = true,
+          Trouble = true, trouble = true, lazy = true, mason = true, lspinfo = true,
+          notify = true, qf = true, ["copilot-chat"] = true, Avante = true, AvanteInput = true,
+          dbui = true, dbout = true, ["sql.dbui"] = true,
+          undotree = true, aerial = true, OverseerList = true, OverseerForm = true,
+          toggleterm = true, fugitive = true, fugitiveblame = true,
+          ["dap-repl"] = true, ["dapui_scopes"] = true, ["dapui_breakpoints"] = true,
+          ["dapui_stacks"] = true, ["dapui_watches"] = true, ["dapui_console"] = true,
+        }
+        if buftype == nil or filetype == nil then return "" end
+        if skip_buftype[buftype] then return "" end
+        if skip_filetype[filetype] then return "" end
+        -- Empty filetype too — no parser, no LSP fold ranges
+        if filetype == "" then return "" end
+        return { "lsp", "treesitter" }
+      end,
       fold_virt_text_handler = function(virt_text, lnum, end_lnum, width, truncate)
         local suffix = ("  󰁂 %d "):format(end_lnum - lnum)
         local sufWidth = vim.fn.strdisplaywidth(suffix)
