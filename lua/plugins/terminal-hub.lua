@@ -13,7 +13,7 @@ return {
       local saved_terminal
       return {
         window = { open = "alternate" },
-        callbacks = {
+        hooks = {
           -- REQUIRED in current flatten: identifies this nvim's IPC socket so
           -- nested `nvim` calls from within :term can collapse into us.
           pipe_path = function()

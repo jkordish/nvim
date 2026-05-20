@@ -72,11 +72,31 @@ opt.listchars = { tab = "→ ", trail = "·", nbsp = "␣" }
 opt.spelllang = { "en" }
 opt.sessionoptions = { "buffers", "curdir", "tabpages", "winsize", "help", "globals", "skiprtp", "folds" }
 
--- Faster startup: skip some default providers we don't use.
-vim.g.loaded_python_provider = 0
+-- Faster startup: skip default providers we don't use.
+vim.g.loaded_python_provider = 0      -- python2 (unused)
 vim.g.loaded_ruby_provider = 0
 vim.g.loaded_perl_provider = 0
 vim.g.loaded_node_provider = 0
+
+-- Point python3 provider at a real binary (not the asdf shim) so the
+-- "appears to be a pyenv shim" healthcheck warning goes away. This is the
+-- python that actually has pynvim installed.
+do
+  local candidates = {
+    vim.fn.expand("~/.asdf/installs/python/3.12-dev/bin/python3"),
+    "/opt/homebrew/bin/python3",
+    "/usr/bin/python3",
+  }
+  for _, p in ipairs(candidates) do
+    if vim.fn.executable(p) == 1 then
+      local has_pynvim = vim.fn.system({ p, "-c", "import pynvim" })
+      if vim.v.shell_error == 0 then
+        vim.g.python3_host_prog = p
+        break
+      end
+    end
+  end
+end
 
 -- Silence deprecation warnings from upstream plugins (git-conflict, hydra,
 -- rustaceanvim) using removed nvim 0.12 APIs. They'll fix it; meanwhile we

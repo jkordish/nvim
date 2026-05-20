@@ -218,7 +218,7 @@ return {
 
       return {
         options = {
-          theme = "catppuccin",
+          theme = "catppuccin-mocha",
           globalstatus = true,
           -- Powerline-style segment separators (the wedge glyphs)
           component_separators = { left = "", right = "" },

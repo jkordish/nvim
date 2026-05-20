@@ -9,9 +9,9 @@
 ╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝
 ```
 
-### a banger of a config — the kind that replaces VSCode
+### a banger of a config — the kind that replaces VSCode and then some
 
-`123 plugins` · `29 spec files` · `nvim 0.12+` · `lazy.nvim` · `catppuccin mocha`
+`122 plugins` · `30 plugin specs` · `49 hand-rolled Lua modules` · `nvim 0.12+` · `lazy.nvim` · `catppuccin mocha`
 
 </div>
 
@@ -21,7 +21,9 @@
 
 A complete Neovim distro tuned to be your **single home in the terminal** — not just an editor. Native LSP for 15+ languages, three AI assistants wired in (Copilot ghost text + Copilot Chat + Avante/Claude), full Git workflow including Magit-style commits and PR review, a database client, a REST client, a Kubernetes panel, Jupyter notebooks, a second-brain note system, all running on **nvim 0.12** with the modern `vim.lsp.config` API and the maintained `nvim-treesitter` main branch.
 
-If VSCode does it, this does it — faster, in your terminal, on your keymaps.
+On top of that: a **`lua/user/` directory of 49 hand-rolled native modules** — yank-ring, AI cmdline with streaming, perf HUD, presentation mode, workspace snapshots, per-language REPL, coverage gutters, async job queue, git churn heatmap, search-jump pulse, in-nvim HTTP server, symbol tree, daily activity dashboard, spotlight picker, smart paste, treesitter playground, regex tester, streaming AI explainer, git time machine, named macros, cockpit HUD, starship-style statusline, compass, radar, throttle launcher, pre-flight checklist, black box recorder, eject panic, aurora animation, matrix rain, contribution calendar, code-as-constellation map, synesthesia identifier coloring, breathing exercise, AI haiku, idle-time dream paragraphs, save-chord audio, developer tarot deck, ASCII tamagotchi, dimensional rift, sigil generator, encrypted scratchpad, line-by-line blame whispers, journal-writing homunculus agent, keystroke steno + replay, window summoner, coin-flip oracle, upside-down code mirror.
+
+If VSCode does it, this does it — faster, in your terminal, on your keymaps. And then it keeps going.
 
 ---
 
@@ -36,8 +38,10 @@ If VSCode does it, this does it — faster, in your terminal, on your keymaps.
 7. [VSCode parity table](#vscode-parity-table)
 8. [First-class languages](#first-class-languages)
 9. [Workflows — show me a day in the life](#workflows--show-me-a-day-in-the-life)
-10. [Keymap reference](#keymap-reference) (`Space` is leader)
-11. [The status bar](#the-status-bar)
+10. [Native Lua modules (`lua/user/`)](#native-lua-modules-luauser) — the cockpit + 48 hand-rolled features
+11. [Diagnostic tool — `doctor.sh`](#diagnostic-tool--doctorsh)
+12. [Keymap reference](#keymap-reference) (`Space` is leader)
+13. [The status bar](#the-status-bar)
 12. [Layout / where things live](#layout--where-things-live)
 13. [Customization tips](#customization-tips)
 14. [Troubleshooting](#troubleshooting)
@@ -370,6 +374,124 @@ Alpha dashboard pops with recent files. Pick one with `r`. Or:
 
 ---
 
+## Native Lua modules (`lua/user/`)
+
+49 hand-rolled modules (~9300 lines of original Lua, zero third-party dependencies beyond what's already loaded). Loaded eagerly as one pseudo-plugin spec at `lua/plugins/user-modules.lua` so all commands and keymaps register at startup. Grouped by intent below.
+
+### Practical — daily-driver tools (`<leader>u`)
+| Module | Command | Keymap | What it does |
+|---|---|---|---|
+| `yankring`     | —              | `<leader>p`  | Persistent yank history of 50, telescope picker with syntax preview |
+| `ai_cmd`       | `:AI <intent>` | `<leader>ai` | Direct Anthropic API call with cursor context — returns suggestions |
+| `perfhud`      | `:PerfHUD`     | `<leader>up` | Live FPS / RSS memory / LSP req rate / top-5 slowest plugins in a float |
+| `present`      | `:Present`     | `<leader>P`  | Markdown → slideshow split on `# H1` |
+| `workspace`    | `:WorkspaceSave/Load/List` | `<leader>WS/WR/WL` | Tab×window+cursor+harpoon snapshot per cwd |
+| `repl`         | `:Repl*`       | `<leader>rt/rl/rp/rb/rr` | Per-filetype REPL with send line/paragraph/buffer/selection |
+| `coverage`     | `:Coverage{Show,Hide,Refresh}` | `<leader>uc/uC` | Cobertura/LCOV gutter signs for covered/uncovered lines |
+| `jobs`         | `:Job <name> <cmd>` / `:JobList` | `<leader>uj` | Async job queue; spinner in lualine `  ⠋ 2 jobs` |
+| `heatmap`      | `:Heatmap`     | `<leader>uh` | Git blame age → 9-step color gradient gutter |
+| `pulse`        | `:Pulse`       | (auto on n/N/*/#) | Search-jump line flash via extmark + timer |
+| `webhook`      | `:WebhookStart <port>` | `<leader>uw/uW` | **Actual TCP HTTP server inside nvim** — POST /open, /eval, /notify |
+| `symtree`      | `:SymTree`     | `<leader>uo` | LSP-symbol ASCII tree side panel with type-aware icons |
+| `today`        | `:Today`       | `<leader>ut` | Today's commits/files/lines + 24-hour sparkline + top changed files |
+
+### Power-user picker + transforms (`<leader>u` + `<leader>c`)
+| Module | Command | Keymap | What it does |
+|---|---|---|---|
+| `spotlight`    | `:Spotlight`   | `<C-S-Space>` / `<leader>uS` | Unified picker across files+buffers+marks+jumps+diagnostics+commands+AI |
+| `smartpaste`   | `:SmartPaste`  | `<leader>uv` | Detects URL/JSON/base64/UUID/hex/timestamp in clipboard → offers transforms |
+| `tsplay`       | `:TSPlay`      | `<leader>uT` | Live treesitter AST playground following the cursor |
+| `rextest`      | `:RegexTest`   | `<leader>uR` | Floating regex input with live match-highlighting + count |
+| `explain`      | `:Explain`     | `<leader>cX` | **Streaming** AI explanation of the diagnostic under cursor (SSE → virt_lines) |
+| `timetravel`   | `:TimeTravel`  | `<leader>gT` | Scrub the current file through every commit that touched it with `←/→` |
+| `macroreg`     | `:Macro{Save,Run}` | `<leader>qm/qM` | Persistent named macro library |
+
+### The cockpit (`<leader>!`)
+A mission-control HUD layout you can engage with one keystroke. Symtree on the left, Trouble on the right, terminal at the bottom, compass + radar floating, all balanced.
+
+| Module | Command | Keymap | What it does |
+|---|---|---|---|
+| `cockpit`      | `:Cockpit` / `:Disengage` | `<leader>!!` | Engage / disengage the entire HUD layout |
+| `compass`      | `:Compass`     | `<leader>!c` | Always-on floating display: mode · cwd · branch · LSP · git dirty · clock |
+| `radar`        | `:Radar`       | `<leader>!r` | Circular ASCII radar showing diagnostics + marks plotted by proximity |
+| `throttle`     | `:Throttle`    | `<leader>!t` / `<F1>` | Tiled action launcher — press 1-8 to fire (Run tests, Build, Lazygit, …) |
+| `checklist`    | `:Preflight`   | `<leader>!p` | Pre-flight checks with pass/fail lights; override with `.preflight.lua` |
+| `blackbox`     | `:Blackbox`    | `<leader>!b` | Event recorder (cmds, buf writes, LSP attach, yanks) with timeline browser |
+| `eject`        | `:Eject`       | `<leader>!e` | Panic button: closes all floats, kills jobs, stops webhook, resets layout |
+| `warnings`     | (lualine seg)  | —            | LED status lights: ●MOD ●ERR ●JOB ●GIT ●NET |
+| `starship`     | (lualine segs) | —            | 25-module conditional statusline (next section) |
+
+### The starship-style statusline modules
+Each segment is a function returning `{text, fg, bg}` or `""` when context doesn't apply. Heavy TTL caching. Rendered with powerline `` wedges via auto-allocated highlight groups.
+
+**Always:** os · user · dir · time · cmd_duration (after >500ms commands) · cpu · ram · battery
+**Conditional:** ssh (only on remote) · git branch + ahead/behind/stash · git diff (when changes exist) · python venv (only in py files/projects) · node version (in JS/TS) · go (in go files) · rust (in rust files) · terraform (in tf) · docker (when Dockerfile in repo) · k8s (when k8s yaml + context) · cloud (gcloud/aws account) · direnv (when .envrc loaded) · update (↓N when behind upstream) · ai (Copilot+Avante combined) · pomo · project_type (auto-detect rust/go/node/poetry/…) · package_version (this project's own version from Cargo.toml/pyproject.toml/package.json)
+
+### The artistic deck (`<leader>A`)
+| Module | Command | Keymap | What it does |
+|---|---|---|---|
+| `aurora`       | `:Aurora`     | `<leader>Aa` | Animated shifting-hue gradient floating in the corner |
+| `matrix`       | `:Matrix`     | `<leader>Am` | Persistent katakana rain in a slim side column |
+| `contribcal`   | `:Contributions` | `<leader>Ac` | GitHub-style 7×52 commit heatmap of your year |
+| `constellation`| `:Constellation` | `<leader>An` | Project files as a star map; size = LOC, color = recency |
+| `synesthesia`  | `:Synesthesia` | `<leader>As` | Hashes every identifier to a deterministic pastel color |
+| `zen`          | `:Zen`        | `<leader>Az` | Animated breathing circle: 4s in · 4s hold · 4s out |
+| `haiku`        | `:Haiku`      | `<leader>Ah` | AI 5-7-5 haiku about the function under cursor |
+
+### The occult deck (`<leader>A` continued)
+| Module | Command | Keymap | What it does |
+|---|---|---|---|
+| `dreams`       | `:Dreams` / `:DreamNow` | `<leader>Ad/AD` | After 90s idle, AI generates a surreal paragraph about your code and types it into a sidebar |
+| `synth`        | `:Synth` / `:SynthDemo` | `<leader>Ay` | Maps filetype → macOS system sound on save (Glass for lua, Hero for python, Funk for go, …) |
+| `tarot`        | `:Tarot` / `:TarotDraw` | `<leader>At/AT` | 18-card developer tarot deck. Daily card is deterministic by date. |
+| `tiny_world`   | `:TinyWorld`  | `<leader>Aw` | Persistent ASCII garden that grows from your saves + commits |
+| `rift`         | `:Rift`       | `<leader>Ar` (v) | Visual selection → ripgrep across project → floating "echoes" panel |
+| `glyph`        | `:Glyph`      | `<leader>Ag/AG` | Cursor-word → deterministic ASCII sigil as virt_lines below |
+| `cipher`       | `:Cipher`     | `<leader>AC` | AES-256-CBC encrypted scratchpad in a float; passphrase via stdin to openssl |
+| `seance`       | `:Seance`     | `<leader>AS` | On CursorHold, whispers the git blame author + age + commit subject |
+| `homunculus`   | `:HomunculusWake` / `:HomunculusRead` | `<leader>AH/AJ` | AI agent: gathers today's git diff, writes a journal entry, appends to `~/notes/journal/YYYY-MM-DD.md`. Auto-runs on VimLeavePre. |
+| `quill`        | `:Quill` / `:QuillReplay` | `<leader>Aq/AQ` | Logs every keystroke with timestamp; replays a past session as a typing animation |
+| `summon`       | `:Summon`     | `<leader>Au` | Remembers every plugin window you've opened; pick to recall one you closed |
+| `oracle`       | `:Oracle <q>` | `<leader>Ao` | Spinning ASCII coin animation, lands on AI's yes/no answer (or random if no key) |
+| `mirror`       | `:Mirror`     | `<leader>AM` | Vertical split with the source file rendered upside-down + characters reversed, live-synced |
+
+### Setup requirements per module
+
+| Module | Needs |
+|---|---|
+| `ai_cmd`, `explain`, `dreams`, `haiku`, `oracle`, `homunculus` | `ANTHROPIC_API_KEY` |
+| `cipher` | `openssl` (preinstalled on macOS) |
+| `seance`, `heatmap`, `timetravel`, `today`, `homunculus`, `contribcal` | git repo |
+| `coverage` | A `coverage.xml` / `lcov.info` in the project |
+| `synth` | macOS (`afplay` + system sounds) or Linux (`paplay`/`canberra-gtk-play`) |
+| `webhook` | nothing — `vim.uv.new_tcp` builds the server itself |
+| `tsplay`, `symtree`, `glyph`, `synesthesia` | LSP attached (for symtree) / treesitter parser (for the others) |
+
+---
+
+## Diagnostic tool — `doctor.sh`
+
+`~/.config/nvim/scripts/doctor.sh` runs nvim headless, captures `:checkhealth` + `:messages` + `lazy.stats()`, and surfaces only the actionable issues. Exit code = number of `❌ ERROR` lines.
+
+```bash
+./scripts/doctor.sh              # default: issues (errors + warns), grouped
+./scripts/doctor.sh stats        # plugin count + startup ms
+./scripts/doctor.sh messages     # just :messages
+./scripts/doctor.sh health       # full :checkhealth (~10k lines)
+./scripts/doctor.sh errors       # only ❌ lines
+./scripts/doctor.sh warns        # only ⚠ lines
+./scripts/doctor.sh full         # the whole report
+./scripts/doctor.sh section snacks   # one plugin's section
+```
+
+Polls until the checkhealth buffer stabilizes (≥1s of no growth, 12s max) so async checks complete. Filters out section delimiters intelligently so the long `========` rules don't trip the regex. Use it in any CI gate:
+
+```bash
+if ./scripts/doctor.sh issues; then echo "clean"; fi
+```
+
+---
+
 ## Keymap reference
 
 `<Space>` is leader. Press `<leader>?` for a buffer-aware overview, or `<leader>sk` to search every binding via Telescope.
@@ -607,16 +729,33 @@ Globalstatus is on — one statusline across the whole frame, not per-window.
     ├── writing.lua             # pencil, ltex (grammar), wordy
     │
     ├── fun.lua                 # cellular-automaton, mini.map, auto-save, modicator
-    └── terminal-hub.lua        # flatten, fzf-lua, devcontainer, cheat.sh, devdocs
+    ├── terminal-hub.lua        # flatten, fzf-lua, devcontainer, cheat.sh, devdocs
+    └── user-modules.lua        # pseudo-plugin spec that loads every lua/user/ module
+
+lua/user/                       # 49 hand-rolled native modules (~9300 LOC)
+├── (practical)         yankring · ai_cmd · perfhud · present · workspace · repl · coverage
+├── (background)        jobs · heatmap · pulse · webhook · symtree · today
+├── (power picker)      spotlight · smartpaste · tsplay · rextest · explain · timetravel · macroreg
+├── (cockpit)           cockpit · compass · radar · throttle · checklist · blackbox · warnings · eject
+├── (statusline)        starship
+├── (artistic)          aurora · matrix · contribcal · constellation · synesthesia · zen · haiku
+└── (occult)            dreams · synth · tarot · tiny_world · rift ·
+                        glyph · cipher · seance · homunculus ·
+                        quill · summon · oracle · mirror
+
+scripts/
+└── doctor.sh                   # headless :checkhealth + :messages capture
 ```
 
-**Mental model:** language tooling is in `lang-*.lua`, UI is in `ui.lua` and `visual.lua`, AI is in `copilot.lua`/`avante.lua`, the rest splits by capability domain. Add a new plugin by dropping a new file (or a new entry in an existing concern file) — lazy.nvim discovers it automatically via the `{ import = "plugins" }` spec.
+**Mental model — plugins/:** language tooling in `lang-*.lua`, UI in `ui.lua` and `visual.lua`, AI in `copilot.lua`/`avante.lua`, the rest splits by capability domain. Add a plugin by dropping a new file — lazy.nvim discovers it via `{ import = "plugins" }`.
+
+**Mental model — user/:** each file is a single feature. Setup happens in `lua/plugins/user-modules.lua`'s `config = function()` block which requires every user module's `setup()`. Add a new module by writing `lua/user/<name>.lua` with a `setup()` that registers commands/autocmds, then add `require("user.<name>").setup()` to user-modules.lua and (optionally) a keymap entry in its `keys = {...}`.
 
 ---
 
 ## Customization tips
 
-- **Change colorscheme** — edit `lua/plugins/colorscheme.lua` and the `theme = "catppuccin"` line in `lua/plugins/ui.lua` (lualine section).
+- **Change colorscheme** — edit `lua/plugins/colorscheme.lua` and the `theme = "catppuccin-mocha"` line in `lua/plugins/ui.lua` (lualine section). Note the theme name must match a file in `lua/lualine/themes/`; for Catppuccin that's `catppuccin-{mocha,latte,frappe,macchiato}`, *not* bare `catppuccin`.
 - **Add a language** — append to `ensure_installed` in `lua/plugins/lsp.lua` (LSP), `lua/plugins/treesitter.lua` (parsers), and `lua/plugins/lsp.lua` formatters_by_ft for conform.
 - **Add a custom snippet** — drop `.json` / `.code-snippets` files in `~/.config/nvim/snippets/` (auto-loaded by LuaSnip via friendly-snippets loader).
 - **Point Obsidian at an existing vault** — edit the `workspaces` table in `lua/plugins/notes.lua`.
@@ -627,8 +766,11 @@ Globalstatus is on — one statusline across the whole frame, not per-window.
 
 ## Troubleshooting
 
+**First step for any weirdness:** `./scripts/doctor.sh issues` — surfaces actionable items only, exit code = error count.
+
 | Symptom | Fix |
 |---|---|
+| "I don't know what's broken" | Run `./scripts/doctor.sh issues` |
 | Wall of treesitter errors on open | You're missing the tree-sitter CLI. `brew install tree-sitter-cli` then `:TSUpdate` |
 | Icons look broken / question marks | Set your terminal font to a Nerd Font (`brew install --cask font-jetbrains-mono-nerd-font`) |
 | `:checkhealth` complains about `magick` | Optional — only for `image.nvim` which is disabled in this config. Snacks.image handles inline images natively |

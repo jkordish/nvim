@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-MODE="${1:-full}"; shift || true
+MODE="${1:-issues}"; shift || true   # default: just surface the actionable items
 EXTRA=()
 if [[ "${1:-}" == "--" ]]; then shift; EXTRA=("$@"); fi
 
