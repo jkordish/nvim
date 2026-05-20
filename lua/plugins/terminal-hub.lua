@@ -1,0 +1,137 @@
+return {
+  -- ─────────────────────────────────────────────────────────────────────
+  -- CRITICAL: when you `:term` and run `nvim foo.txt`, that nested nvim
+  -- collapses into the parent — file opens in the host nvim instead of
+  -- spawning an editor inside an editor. This is THE quality-of-life
+  -- plugin for living in nvim.
+  -- ─────────────────────────────────────────────────────────────────────
+  {
+    "willothy/flatten.nvim",
+    lazy = false,
+    priority = 1001,
+    opts = function()
+      local saved_terminal
+      return {
+        window = { open = "alternate" },
+        callbacks = {
+          should_block = function(argv)
+            return vim.tbl_contains(argv, "-b")
+          end,
+          pre_open = function()
+            local term = require("toggleterm.terminal")
+            local termid = term.get_focused_id()
+            saved_terminal = term.get(termid)
+          end,
+          post_open = function(bufnr, winnr, ft, is_blocking)
+            if is_blocking and saved_terminal then
+              saved_terminal:close()
+            else
+              vim.api.nvim_set_current_win(winnr)
+            end
+            if ft == "gitcommit" or ft == "gitrebase" then
+              vim.api.nvim_create_autocmd("BufWritePost", {
+                buffer = bufnr, once = true,
+                callback = vim.schedule_wrap(function() vim.api.nvim_buf_delete(bufnr, {}) end),
+              })
+            end
+          end,
+          block_end = function()
+            vim.schedule(function() if saved_terminal then saved_terminal:open() end end)
+          end,
+        },
+      }
+    end,
+  },
+
+  -- ─────────────────────────────────────────────────────────────────────
+  -- fzf-lua — alternative blazing fast picker. Use alongside Telescope;
+  -- fzf-lua wins for huge codebases and live grep with regex.
+  -- ─────────────────────────────────────────────────────────────────────
+  {
+    "ibhagwan/fzf-lua",
+    cmd = "FzfLua",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    keys = {
+      { "<leader>zf", "<cmd>FzfLua files<CR>",         desc = "fzf files" },
+      { "<leader>zg", "<cmd>FzfLua live_grep<CR>",     desc = "fzf grep" },
+      { "<leader>zG", "<cmd>FzfLua live_grep_resume<CR>", desc = "fzf grep resume" },
+      { "<leader>zb", "<cmd>FzfLua buffers<CR>",       desc = "fzf buffers" },
+      { "<leader>zh", "<cmd>FzfLua help_tags<CR>",     desc = "fzf help" },
+      { "<leader>zr", "<cmd>FzfLua resume<CR>",        desc = "fzf resume" },
+      { "<leader>zs", "<cmd>FzfLua lsp_document_symbols<CR>", desc = "fzf doc symbols" },
+      { "<leader>zS", "<cmd>FzfLua lsp_live_workspace_symbols<CR>", desc = "fzf workspace symbols" },
+      { "<leader>zc", "<cmd>FzfLua commands<CR>",      desc = "fzf commands" },
+    },
+    opts = {
+      "fzf-native",
+      winopts = { border = "rounded", preview = { border = "rounded" } },
+      grep = { rg_opts = "--column --line-number --no-heading --color=always --smart-case --hidden -g '!.git'" },
+    },
+  },
+
+  -- ─────────────────────────────────────────────────────────────────────
+  -- Dev Containers — open a project in its declared devcontainer.
+  -- VSCode Remote Containers parity.
+  -- ─────────────────────────────────────────────────────────────────────
+  {
+    "https://codeberg.org/esensar/nvim-dev-container",
+    cmd = { "DevcontainerUp", "DevcontainerStart", "DevcontainerStop", "DevcontainerAttach", "DevcontainerExec", "DevcontainerLogs", "DevcontainerEditDockerfile", "DevcontainerEditNearestDockerfile" },
+    keys = {
+      { "<leader>Cu", "<cmd>DevcontainerUp<CR>",      desc = "Devcontainer up" },
+      { "<leader>Cs", "<cmd>DevcontainerStop<CR>",    desc = "Devcontainer stop" },
+      { "<leader>Cd", "<cmd>DevcontainerStop<CR>",    desc = "Devcontainer down" },
+      { "<leader>Cl", "<cmd>DevcontainerLogs<CR>",    desc = "Devcontainer logs" },
+      { "<leader>Ca", "<cmd>DevcontainerAttach<CR>",  desc = "Devcontainer attach" },
+      { "<leader>Cx", "<cmd>DevcontainerExec<CR>",    desc = "Devcontainer exec" },
+    },
+    config = function()
+      require("devcontainer").setup({
+        autocommands = { init = true, clean = false, update = true },
+        container_runtime = "docker",
+        compose_command = "docker compose",
+      })
+    end,
+  },
+
+  -- ─────────────────────────────────────────────────────────────────────
+  -- TLDR / cheat.sh inside nvim. Quick syntax reminders for any tool.
+  -- ─────────────────────────────────────────────────────────────────────
+  {
+    "RishabhRD/nvim-cheat.sh",
+    cmd = { "Cheat", "CheatWithoutComments", "CheatList" },
+    dependencies = { "RishabhRD/popfix" },
+    keys = {
+      { "<leader>?h", "<cmd>Cheat<CR>", desc = "cheat.sh lookup" },
+    },
+  },
+
+  -- ─────────────────────────────────────────────────────────────────────
+  -- Local devdocs.io browser. Offline docs for any language.
+  -- ─────────────────────────────────────────────────────────────────────
+  {
+    "luckasRanarison/nvim-devdocs",
+    cmd = { "DevdocsOpen", "DevdocsInstall", "DevdocsUninstall", "DevdocsFetch", "DevdocsUpdate", "DevdocsUpdateAll" },
+    keys = {
+      { "<leader>?d", "<cmd>DevdocsOpenCurrentFloat<CR>", desc = "Devdocs current ft" },
+      { "<leader>?D", "<cmd>DevdocsOpenFloat<CR>",        desc = "Devdocs search" },
+    },
+    opts = {
+      previewer_cmd = "glow",
+      cmd_args = { "-s", "dark", "-w", "80" },
+      cmd_ignore = {},
+      picker_cmd = false,
+      ensure_installed = { "lua-5.4", "rust", "go", "python~3.12", "typescript", "javascript", "node~20_lts" },
+      wrap = true,
+    },
+  },
+
+  -- Numbered terminals (terminal definitions live in editor.lua).
+  {
+    "akinsho/toggleterm.nvim",
+    keys = {
+      { "<leader>1t",  "<cmd>1ToggleTerm<CR>", desc = "Term 1" },
+      { "<leader>2t",  "<cmd>2ToggleTerm<CR>", desc = "Term 2" },
+      { "<leader>3t",  "<cmd>3ToggleTerm<CR>", desc = "Term 3" },
+    },
+  },
+}
