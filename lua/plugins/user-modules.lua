@@ -36,6 +36,29 @@ return {
       require("user.eject").setup()
       require("user.cockpit").setup()
       require("user.starship").setup()
+      -- ─── artistic ───
+      require("user.aurora").setup()
+      require("user.matrix").setup()
+      require("user.contribcal").setup()
+      require("user.constellation").setup()
+      require("user.synesthesia").setup()
+      require("user.zen").setup()
+      require("user.haiku").setup()
+      -- ─── weirder still ───
+      require("user.dreams").setup()
+      require("user.synth").setup()
+      require("user.tarot").setup()
+      require("user.tiny_world").setup()
+      require("user.rift").setup()
+      -- ─── occult ───
+      require("user.glyph").setup()
+      require("user.cipher").setup()
+      require("user.seance").setup()
+      require("user.homunculus").setup()
+      require("user.quill").setup()
+      require("user.summon").setup()
+      require("user.oracle").setup()
+      require("user.mirror").setup()
     end,
     keys = {
       -- Yank ring (normal mode only — visual <leader>p is paste-without-yank)
@@ -99,6 +122,34 @@ return {
       { "<leader>!p", function() require("user.checklist").run() end, desc = "Pre-flight checklist" },
       { "<leader>!b", function() require("user.blackbox").show() end, desc = "Black box: timeline" },
       { "<leader>!e", function() require("user.eject").go() end, desc = "Eject: panic reset" },
+      -- ─── ART ─── (under <leader>A namespace — capital A for artistic)
+      { "<leader>Aa", function() require("user.aurora").toggle() end,    desc = "Aurora animation" },
+      { "<leader>Am", function() require("user.matrix").toggle() end,    desc = "Matrix rain side column" },
+      { "<leader>Ac", function() require("user.contribcal").show() end,  desc = "Contribution calendar" },
+      { "<leader>An", function() require("user.constellation").open() end, desc = "Constellation: codebase as star map" },
+      { "<leader>As", function() require("user.synesthesia").toggle() end, desc = "Synesthesia: hash-color identifiers" },
+      { "<leader>Az", function() require("user.zen").open() end,         desc = "Zen breathing exercise" },
+      { "<leader>Ah", function() require("user.haiku").compose() end,    desc = "Haiku for function under cursor" },
+      { "<leader>Ad", function() require("user.dreams").toggle() end,    desc = "Dreams: idle-time AI sidebar" },
+      { "<leader>AD", function() require("user.dreams").now() end,       desc = "Dream now" },
+      { "<leader>Ay", function() require("user.synth").toggle() end,     desc = "Synth: chord-on-save" },
+      { "<leader>At", function() require("user.tarot").today() end,      desc = "Tarot: today's card" },
+      { "<leader>AT", function() require("user.tarot").draw() end,       desc = "Tarot: draw random" },
+      { "<leader>Aw", function() require("user.tiny_world").show() end,  desc = "Tiny World: ASCII garden" },
+      { "<leader>Ar", function() require("user.rift").open() end,        desc = "Dimensional Rift (visual)", mode = "v" },
+      -- ─── occult sub-namespace ───
+      { "<leader>Ag", function() require("user.glyph").toggle() end,     desc = "Glyph: cursor-word sigils" },
+      { "<leader>AG", function() require("user.glyph").draw_once() end,  desc = "Glyph: draw sigil once" },
+      { "<leader>AC", function() require("user.cipher").open() end,      desc = "Cipher: encrypted scratchpad" },
+      { "<leader>AS", function() require("user.seance").toggle() end,    desc = "Seance: line blame whispers" },
+      { "<leader>AH", function() require("user.homunculus").wake() end,  desc = "Homunculus: write today's journal" },
+      { "<leader>AJ", function() require("user.homunculus").read() end,  desc = "Homunculus: read today's journal" },
+      -- ─── more weird ───
+      { "<leader>Aq", function() require("user.quill").toggle() end,     desc = "Quill: keystroke steno" },
+      { "<leader>AQ", function() require("user.quill").replay() end,     desc = "Quill: replay session" },
+      { "<leader>Au", function() require("user.summon").show() end,      desc = "Summon: recall closed window" },
+      { "<leader>Ao", function() vim.cmd("Oracle") end,                  desc = "Oracle: ask yes/no" },
+      { "<leader>AM", function() require("user.mirror").toggle() end,    desc = "Mirror: reversed reflection" },
     },
   },
 }
