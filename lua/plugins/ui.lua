@@ -140,17 +140,18 @@ return {
         options = {
           theme = "catppuccin-mocha",
           globalstatus = true,
-          -- Powerline-style segment separators (the wedge glyphs)
+          -- chain() already emits its own powerline wedges between segments;
+          -- lualine's component separators would double them up.
           component_separators = { left = "", right = "" },
           section_separators   = { left = "", right = "" },
           disabled_filetypes = {
             statusline = { "dashboard", "alpha", "starter", "snacks_dashboard" },
             winbar = { "dashboard", "alpha", "starter", "neo-tree", "Trouble", "trouble", "snacks_dashboard" },
           },
-          -- 100ms refresh = 10fps. Smooth enough for the spinner + macro pulse
-          -- but still cheap: every starship segment is TTL-cached, so a refresh
-          -- is just string concat over pre-computed values.
-          refresh = { statusline = 100 },
+          -- 250ms = 4fps. Spinner + macro pulse stay smooth enough; async
+          -- providers call lualine.refresh() directly when their data lands,
+          -- so the timer is just a fallback for purely time-based chips.
+          refresh = { statusline = 250 },
         },
         sections = {
           -- A/B emptied — mode now lives inside the starship left chain so the
