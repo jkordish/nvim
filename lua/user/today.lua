@@ -32,8 +32,14 @@ end
 local function pomos_completed()
   local ok, pomo = pcall(require, "pomo")
   if not ok then return nil end
+  -- pomo.nvim's public API exposes `get_all_timers()`. The plugin returns
+  -- nil instead of {} when no timers exist, so default with `or {}`. We
+  -- also defend against the function itself being absent (in case a future
+  -- version renames it again) — the chip just hides instead of crashing.
+  local list_fn = pomo.get_all_timers or pomo.get_all
+  if type(list_fn) ~= "function" then return nil end
   local count = 0
-  for _, t in ipairs(pomo.get_all() or {}) do
+  for _, t in ipairs(list_fn() or {}) do
     if t._completed then count = count + 1 end
   end
   return count

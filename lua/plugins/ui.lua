@@ -120,52 +120,7 @@ return {
         color = { fg = colors.sky },
       }
 
-      -- Copilot status (uses copilot.lua api)
-      local copilot = {
-        function()
-          local ok, api = pcall(require, "copilot.api")
-          if not ok then return "" end
-          local status = api.status.data
-          if status.status == "InProgress" then return "  " end
-          if status.status == "Warning" then return "  " end
-          return "  "
-        end,
-        color = function()
-          local ok, api = pcall(require, "copilot.api")
-          if not ok then return { fg = colors.overlay0 } end
-          local s = api.status.data.status
-          if s == "Warning" then return { fg = colors.red } end
-          if s == "InProgress" then return { fg = colors.yellow } end
-          return { fg = colors.green }
-        end,
-      }
-
-      -- Indent mode (spaces:N | tab:N)
-      local indent = {
-        function()
-          local et = vim.bo.expandtab
-          local sw = vim.bo.shiftwidth
-          return (et and "" or "󰌒 ") .. (et and "sp:" or "tab:") .. sw
-        end,
-        color = { fg = colors.overlay1 },
-      }
-
-      -- File size
-      local filesize = {
-        function()
-          local f = vim.api.nvim_buf_get_name(0)
-          if f == "" then return "" end
-          local ok, stat = pcall(vim.uv.fs_stat, f)
-          if not ok or not stat then return "" end
-          local b = stat.size
-          if b < 1024 then return b .. "B" end
-          if b < 1024 * 1024 then return string.format("%.1fK", b / 1024) end
-          return string.format("%.1fM", b / 1024 / 1024)
-        end,
-        color = { fg = colors.overlay1 },
-      }
-
-      -- Autoformat indicator
+      -- Autoformat indicator — unique to lualine_x (not in starship).
       local autoformat = {
         function()
           return (vim.g.disable_autoformat or vim.b.disable_autoformat) and "  fmt-off" or ""
@@ -173,62 +128,11 @@ return {
         color = { fg = colors.peach, gui = "italic" },
       }
 
-      -- TS active indicator
-      local treesitter = {
-        function()
-          return vim.b.ts_highlight and "  TS" or ""
-        end,
-        color = { fg = colors.green },
-      }
-
-      -- user.jobs background queue indicator
-      local user_jobs = {
-        function()
-          local ok, jobs = pcall(require, "user.jobs")
-          return ok and jobs.statusline() or ""
-        end,
-        color = { fg = colors.sapphire, gui = "bold" },
-      }
-
-      -- (user.warnings LED panel removed in the cull; dropped from lualine
-      -- because it duplicated info already shown by diagnostics + jobs segments.)
-
-      -- Pomodoro timer (epwalsh/pomo.nvim)
-      local pomo_timer = {
-        function()
-          local ok, pomo = pcall(require, "pomo")
-          if not ok then return "" end
-          local timer = pomo.get_first_to_finish()
-          if timer == nil then return "" end
-          return string.format("  %s %s", timer:remaining_time_str(), timer.name or "")
-        end,
-        color = { fg = colors.peach, gui = "bold" },
-      }
-
-      -- Overseer task count
-      local overseer_tasks = {
-        function()
-          local ok, ov = pcall(require, "overseer")
-          if not ok then return "" end
-          local STATUS = ov.constants and ov.constants.STATUS
-          if not STATUS then return "" end
-          local tasks = ov.list_tasks({ unique = true })
-          local running, ok_count, fail = 0, 0, 0
-          for _, t in ipairs(tasks) do
-            if t.status == STATUS.RUNNING then running = running + 1
-            elseif t.status == STATUS.SUCCESS then ok_count = ok_count + 1
-            elseif t.status == STATUS.FAILURE then fail = fail + 1 end
-          end
-          local parts = {}
-          if running > 0 then table.insert(parts, "󰑮 " .. running) end
-          if fail > 0    then table.insert(parts, " " .. fail) end
-          if ok_count > 0 and #parts > 0 then table.insert(parts, " " .. ok_count) end
-          return #parts > 0 and (" " .. table.concat(parts, " ")) or ""
-        end,
-        color = { fg = colors.mauve },
-      }
-
       -- ─── Starship-style left/right pre-composed segments ───────────────
+      -- Filename, filetype icon, jobs, pomo, overseer tasks, and copilot
+      -- status all live inside the starship chains now (richer chips, click
+      -- handlers, severity coloring). Keeping them here too would just
+      -- render two of each.
       local starship_left  = { function() return require("user.starship").left()  end }
       local starship_right = { function() return require("user.starship").right() end }
 
@@ -254,17 +158,11 @@ return {
           -- between the lualine_a mode block and the starship chain).
           lualine_a = {},
           lualine_b = { starship_left },
-          -- C: file-level info — filetype + filename + noice. Macro, search,
-          -- and diagnostics moved into starship_left (live as colored capsules
-          -- inside the chain, severity-bg for diag, pulsing red for macro).
+          -- C: noice cmdline echo only (filename + filetype now in starship.file).
+          -- The cmdline can legitimately contain `%` (filename register,
+          -- :%s/.../, etc.) which the statusline parser interprets as a
+          -- format directive — `% ` triggers `E539`. Escape `%` to `%%`.
           lualine_c = {
-            { "filetype", icon_only = true, separator = "", padding = { left = 1, right = 0 } },
-            { "filename", path = 1, symbols = { modified = "  ", readonly = " ", unnamed = "[No Name]" } },
-            -- Noice cmdline echo. The cmdline can legitimately contain `%`
-            -- (filename register, :%s/.../, etc.) which the statusline parser
-            -- interprets as a format directive — `% ` (percent + space) then
-            -- triggers `E539: Illegal character < >`. Escape `%` to `%%`
-            -- before lualine hands it to nvim_win_set_option.
             { function()
                 local ok, n = pcall(require, "noice")
                 local s = ok and n.api.status.command.has() and n.api.status.command.get() or ""
@@ -272,14 +170,9 @@ return {
                 return (s:gsub("%%", "%%%%"))
             end },
           },
-          -- X: live indicators — only what's *currently happening*. Everything
-          -- else is hidden until it has something to say. Restraint > density.
+          -- X: autoformat indicator. Jobs/pomo/tasks/copilot moved to starship.
           lualine_x = {
-            user_jobs,        -- shows only when jobs running
-            pomo_timer,       -- shows only during a pomo
-            overseer_tasks,   -- shows only when tasks exist
-            autoformat,       -- shows only when disabled
-            copilot,          -- subtle icon
+            autoformat,
           },
           -- Y: starship-style right chain (lang version + venv  docker  k8s  aws  battery  time)
           lualine_y = { starship_right },

@@ -1,7 +1,13 @@
--- Starship-style dynamic statusline segments. Each segment is conditional:
--- it returns "" unless its context applies (e.g. python_venv only when a venv
--- is active, k8s only when a kubeconfig exists in the project, etc.).
--- All shell-outs are cached so we don't fork on every redraw.
+-- Starship-style dynamic statusline. Three rules:
+--   1. Conditional segments — each module returns "" unless its context
+--      applies, so the chain is naturally sparse when nothing's happening.
+--   2. Three width tiers — critical (always), normal (≥80 cols),
+--      wide (≥120 cols). Slim windows keep mode/file/diag/branch/cursor.
+--   3. Color = signal — most chips render on `surface` bg so the eye treats
+--      them as scannable context. Colored backgrounds are reserved for mode,
+--      branch (accent), diagnostics, macro REC, conflicts, save pulse,
+--      failed tasks, and risky context (prod/admin/main via risk_color()).
+-- All shell-outs are cached via memo() so we don't fork on every redraw.
 local M = {}
 
 -- ─── color palette (catppuccin mocha) ───────────────────────────────────────
@@ -34,6 +40,34 @@ local function find_up(name)
     if parent == dir then return nil end
     dir = parent
   end
+end
+
+-- Severity-driven color for context-name chips (k8s, terraform, aws, cloud,
+-- git branch). Order matters: "prod-admin" → critical, not warn.
+-- Returns nil for benign contexts so the caller can fall back to its
+-- calm/surface palette.
+local function risk_color(name)
+  local n = (name or ""):lower()
+  if n:find("prod") or n:find("production") or n:find("live")
+     or n:find("admin") or n:find("root") then
+    return { bg = M.c.red,   fg = M.c.base, gui = "bold" }
+  end
+  if n == "main" or n == "master" then
+    return { bg = M.c.peach, fg = M.c.base, gui = "bold" }
+  end
+  return nil
+end
+
+-- Trim a context string to last-path-segment, then ellipsize at `max`.
+-- Defends against full kubeconfig ARNs, /etc/aws/... paths, etc. leaking
+-- into the chain.
+local function abbrev(s, max)
+  if not s or s == "" then return "" end
+  max = max or 18
+  -- keep only the last path-like segment so cluster ARNs collapse to the bare name
+  local tail = s:match("([^/:]+)$") or s
+  if #tail > max then tail = tail:sub(1, max - 1) .. "…" end
+  return tail
 end
 
 -- ─── visual helpers (sparklines, gauges, dots) ────────────────────────────
@@ -140,28 +174,59 @@ function M.modules.user()
   return { text = (" %s@%s "):format(user, host), fg = M.c.base, bg = M.c.lavender, gui = "bold" }
 end
 
--- DIR (cwd basename)
+-- DIR (cwd basename) — surface bg; this is scannable context, not an alert.
 function M.modules.dir()
   local cwd = vim.fn.getcwd()
   local name = vim.fn.fnamemodify(cwd, ":t")
-  return { text = ("  %s "):format(name), fg = M.c.base, bg = M.c.sky, gui = "bold" }
+  return { text = ("  %s "):format(name), fg = M.c.text, bg = M.c.surface }
 end
 
--- FILE — active buffer's filetype icon + filename. Hidden in non-file
--- buftypes (terminal/help/qf) and on empty buffers. The icon resolves via
--- mini.icons / nvim-web-devicons (user.icons shim), so it reflects the
--- actual ft instead of a generic chip.
+-- FILE — filename + modified/readonly markers for normal buffers. For
+-- special buffers (help/term/qf/lazy/mason/oil/netrw) emits a friendly
+-- label so the file slot stays meaningful instead of going blank.
+local SPECIAL_FT_LABEL = {
+  lazy = "  lazy", mason = "  mason", oil = "  oil",
+  ["neo-tree"] = "  files", trouble = "  trouble", aerial = "  aerial",
+  TelescopePrompt = "  telescope", help = "  help",
+}
 function M.modules.file()
   local bt = vim.bo.buftype
-  if bt ~= "" then return { text = "" } end
+  local ft = vim.bo.filetype
   local name = vim.api.nvim_buf_get_name(0)
-  if name == "" then return { text = "" } end
+
+  if bt == "help" then
+    local topic = vim.fn.fnamemodify(name, ":t:r")
+    return { text = ("   %s "):format(topic ~= "" and topic or "help"),
+             fg = M.c.text, bg = M.c.surface }
+  end
+  if bt == "terminal" then
+    return { text = "   term ", fg = M.c.text, bg = M.c.surface }
+  end
+  if bt == "quickfix" then
+    local is_loc = vim.fn.getloclist(0, { winid = 0 }).winid ~= 0
+    return { text = ("  %s "):format(is_loc and " loclist" or " qf"),
+             fg = M.c.text, bg = M.c.surface }
+  end
+  if ft == "netrw" or name:match("^oil://") then
+    local d = vim.fn.fnamemodify(name:gsub("^oil://", ""), ":t")
+    if d == "" then d = vim.fn.fnamemodify(vim.fn.getcwd(), ":t") end
+    return { text = ("   %s "):format(d), fg = M.c.text, bg = M.c.surface }
+  end
+  if SPECIAL_FT_LABEL[ft] then
+    return { text = SPECIAL_FT_LABEL[ft] .. " ", fg = M.c.text, bg = M.c.surface }
+  end
+  if bt ~= "" then return { text = "" } end
+  if name == "" then
+    return { text = "  [No Name] ", fg = M.c.overlay, bg = M.c.surface }
+  end
   local short = vim.fn.fnamemodify(name, ":t")
   if short == "" then return { text = "" } end
   local ok, icons = pcall(require, "user.icons")
-  local glyph = ok and icons.ft(name, vim.bo.filetype).icon or ""
+  local glyph = ok and icons.ft(name, ft).icon or ""
   local mod = vim.bo.modified and " ●" or ""
-  return { text = (" %s %s%s "):format(glyph, short, mod), fg = M.c.base, bg = M.c.surface }
+  local ro  = (vim.bo.readonly or not vim.bo.modifiable) and "  " or ""
+  return { text = (" %s %s%s%s "):format(glyph, short, mod, ro),
+           fg = M.c.text, bg = M.c.surface }
 end
 
 -- GIT BRANCH + AHEAD/BEHIND
@@ -182,6 +247,13 @@ function M.modules.git()
     return out
   end)
   if s == "" then return { text = "" } end
+  -- main/master earns peach (warn) so you notice you're on the integration
+  -- branch; everything else stays mauve (the global accent).
+  local branch = s:match("^%s*([%S]+)") or ""
+  local risk = risk_color(branch)
+  if risk then
+    return { text = " " .. s .. " ", fg = risk.fg, bg = risk.bg, gui = risk.gui }
+  end
   return { text = " " .. s .. " ", fg = M.c.base, bg = M.c.mauve, gui = "bold" }
 end
 
@@ -205,184 +277,139 @@ function M.modules.gitdiff()
     return table.concat(parts, " ")
   end)
   if s == "" then return { text = "" } end
-  return { text = " " .. s .. " ", fg = M.c.base, bg = M.c.peach }
+  return { text = " " .. s .. " ", fg = M.c.text, bg = M.c.surface }
 end
 
--- PYTHON VENV (only in python contexts)
+-- Runtime chips: icon-only at ≥120, surface bg. Version strings were dropped
+-- to cut visual noise and remove ~9 background `vim.fn.system()` calls.
+-- A short env tag (venv name, etc.) is allowed where it actually disambiguates.
+
 function M.modules.python()
   local ft = vim.bo.filetype
   if ft ~= "python" and not find_up("pyproject.toml") and not find_up("requirements.txt") then
     return { text = "" }
   end
+  local tag = ""
   local venv = vim.env.VIRTUAL_ENV
-  local name = venv and vim.fn.fnamemodify(venv, ":t") or nil
-  -- Try to detect .venv even if not activated
-  if not name then
-    if find_up(".venv/bin/python") then name = ".venv" end
-  end
-  if not name then name = "py" end
-  local ver = memo("pyver", 60000, function()
-    local v = trim(vim.fn.system("python3 --version 2>/dev/null")):match("Python ([%d.]+)") or ""
-    return v
-  end)
-  return { text = (" 🐍 %s %s "):format(name, ver), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
+  if venv then tag = " " .. abbrev(vim.fn.fnamemodify(venv, ":t"), 12)
+  elseif find_up(".venv/bin/python") then tag = " .venv" end
+  return { text = (" 🐍%s "):format(tag), fg = M.c.text, bg = M.c.surface }
 end
 
--- NODE (only in JS/TS contexts)
 function M.modules.node()
   local ft = vim.bo.filetype
-  local is_js = ft == "javascript" or ft == "typescript" or ft == "javascriptreact" or ft == "typescriptreact" or ft == "vue" or ft == "svelte"
+  local is_js = ft == "javascript" or ft == "typescript" or ft == "javascriptreact"
+             or ft == "typescriptreact" or ft == "vue" or ft == "svelte"
   if not is_js and not find_up("package.json") then return { text = "" } end
-  local ver = memo("nodever", 60000, function()
-    return trim(vim.fn.system("node -v 2>/dev/null"))
-  end)
-  if ver == "" then return { text = "" } end
-  return { text = ("  %s "):format(ver), fg = M.c.base, bg = M.c.green, gui = "bold" }
+  return { text = "   ", fg = M.c.text, bg = M.c.surface }
 end
 
--- GO — gopher (starship convention)
 function M.modules.go()
   if vim.bo.filetype ~= "go" and not find_up("go.mod") then return { text = "" } end
-  local ver = memo("gover", 60000, function()
-    return trim(vim.fn.system("go version 2>/dev/null")):match("go(%S+)") or ""
-  end)
-  return { text = (" 🐹 %s "):format(ver ~= "" and ver or "go"),
-           fg = M.c.base, bg = M.c.sapphire, gui = "bold" }
+  return { text = " 🐹 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- RUST
 function M.modules.rust()
   if vim.bo.filetype ~= "rust" and not find_up("Cargo.toml") then return { text = "" } end
-  local ver = memo("rustver", 60000, function()
-    return trim(vim.fn.system("rustc --version 2>/dev/null")):match("rustc (%S+)") or ""
-  end)
-  return { text = (" 🦀 %s "):format(ver ~= "" and ver or "rust"),
-           fg = M.c.base, bg = M.c.peach, gui = "bold" }
+  return { text = " 🦀 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- LUA — only in lua context (very common in your nvim config edits)
 function M.modules.lua()
   if vim.bo.filetype ~= "lua" then return { text = "" } end
-  local ver = memo("luaver", 60000, function()
-    local v = trim(vim.fn.system("lua -v 2>&1")):match("Lua (%S+)")
-            or trim(vim.fn.system("luajit -v 2>&1")):match("LuaJIT (%S+)")
-    return v or ""
-  end)
-  if ver == "" then ver = "5.x" end
-  return { text = (" 󰢱 %s "):format(ver), fg = M.c.base, bg = M.c.blue, gui = "bold" }
+  return { text = " 󰢱 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- RUBY — ruby gem (starship uses 💎)
 function M.modules.ruby()
   if vim.bo.filetype ~= "ruby" and not find_up("Gemfile") then return { text = "" } end
-  local ver = memo("rbver", 60000, function()
-    return trim(vim.fn.system("ruby -v 2>/dev/null")):match("ruby (%S+)") or ""
-  end)
-  return { text = (" 💎 %s "):format(ver ~= "" and ver or "ruby"),
-           fg = M.c.base, bg = M.c.red, gui = "bold" }
+  return { text = " 💎 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- ELIXIR — water drop (starship convention)
 function M.modules.elixir()
   if vim.bo.filetype ~= "elixir" and not find_up("mix.exs") then return { text = "" } end
-  local ver = memo("exver", 60000, function()
-    return trim(vim.fn.system("elixir --version 2>/dev/null")):match("Elixir (%S+)") or ""
-  end)
-  return { text = (" 💧 %s "):format(ver ~= "" and ver or "elixir"),
-           fg = M.c.base, bg = M.c.mauve, gui = "bold" }
+  return { text = " 💧 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- DENO — separate from node when a deno.json/deno.jsonc is present
 function M.modules.deno()
   if not find_up("deno.json") and not find_up("deno.jsonc") then return { text = "" } end
-  local ver = memo("denover", 60000, function()
-    return trim(vim.fn.system("deno --version 2>/dev/null")):match("deno (%S+)") or ""
-  end)
-  if ver == "" then return { text = "" } end
-  return { text = (" 󰟔 %s "):format(ver), fg = M.c.base, bg = M.c.teal, gui = "bold" }
+  return { text = " 󰟔 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- BUN — when bun.lock or bun.lockb is present
 function M.modules.bun()
   if not find_up("bun.lock") and not find_up("bun.lockb") then return { text = "" } end
-  local ver = memo("bunver", 60000, function()
-    return trim(vim.fn.system("bun --version 2>/dev/null"))
-  end)
-  if ver == "" then return { text = "" } end
-  return { text = (" 󰳏 %s "):format(ver), fg = M.c.base, bg = M.c.peach, gui = "bold" }
+  return { text = " 󰳏 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- JAVA
 function M.modules.java()
   if vim.bo.filetype ~= "java"
      and not find_up("pom.xml") and not find_up("build.gradle")
      and not find_up("build.gradle.kts") then return { text = "" } end
-  local ver = memo("javaver", 60000, function()
-    -- `java -version` prints to stderr; capture both
-    local out = vim.fn.system("java -version 2>&1")
-    return out:match('version "([^"]+)"') or out:match("version (%S+)") or ""
-  end)
-  if ver == "" then return { text = "" } end
-  return { text = (" 󰬷 %s "):format(ver), fg = M.c.base, bg = M.c.red, gui = "bold" }
+  return { text = " 󰬷 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- ZIG — zigzag (starship convention)
 function M.modules.zig()
   if vim.bo.filetype ~= "zig" and not find_up("build.zig") then return { text = "" } end
-  local ver = memo("zigver", 60000, function()
-    return trim(vim.fn.system("zig version 2>/dev/null"))
-  end)
-  return { text = (" ↯ %s "):format(ver ~= "" and ver or "zig"),
-           fg = M.c.base, bg = M.c.peach, gui = "bold" }
+  return { text = " ↯ ", fg = M.c.text, bg = M.c.surface }
 end
 
--- PHP — elephant (starship convention)
 function M.modules.php()
   if vim.bo.filetype ~= "php" and not find_up("composer.json") then return { text = "" } end
-  local ver = memo("phpver", 60000, function()
-    return trim(vim.fn.system("php -v 2>/dev/null")):match("PHP (%S+)") or ""
-  end)
-  return { text = (" 🐘 %s "):format(ver ~= "" and ver or "php"),
-           fg = M.c.base, bg = M.c.lavender, gui = "bold" }
+  return { text = " 🐘 ", fg = M.c.text, bg = M.c.surface }
 end
 
--- DOCKER (when Dockerfile in repo)
 function M.modules.docker()
   if not find_up("Dockerfile") and not find_up("docker-compose.yml") and not find_up("compose.yaml") then
     return { text = "" }
   end
-  return { text = "  docker ", fg = M.c.base, bg = M.c.blue, gui = "bold" }
+  return { text = "   ", fg = M.c.text, bg = M.c.surface }
 end
 
--- KUBERNETES (when k8s yaml in project, shows current kubectl context)
+-- KUBERNETES (when k8s yaml in project, shows current kubectl context).
+-- Context name is abbreviated to defang full cluster ARNs, then run through
+-- risk_color so prod/admin clusters render red+bold.
 function M.modules.k8s()
   local cwd = vim.fn.getcwd()
-  local is_k8s = memo("k8s_proj:" .. cwd, 60000, function()
+  local ctx = memo("k8s_proj:" .. cwd, 60000, function()
     if not find_up("Chart.yaml") and not find_up("kustomization.yaml") then
-      -- Cheap check: any yaml file at repo root with kind:
       local out = vim.fn.systemlist("grep -l --max-count=1 'kind:' " .. cwd .. "/*.yaml " .. cwd .. "/*.yml 2>/dev/null")
       if #out == 0 then return "" end
     end
     return trim(vim.fn.system("kubectl config current-context 2>/dev/null"))
   end)
-  if is_k8s == "" then return { text = "" } end
-  return { text = ("  %s "):format(is_k8s), fg = M.c.base, bg = M.c.teal, gui = "bold" }
+  if ctx == "" then return { text = "" } end
+  local short = abbrev(ctx, 18)
+  local risk = risk_color(ctx)
+  if risk then
+    return { text = (" 󱃾 %s "):format(short), fg = risk.fg, bg = risk.bg, gui = risk.gui }
+  end
+  return { text = (" 󱃾 %s "):format(short), fg = M.c.text, bg = M.c.surface }
 end
 
--- TERRAFORM
+-- TERRAFORM — workspace name, with risk coloring for prod-named workspaces.
 function M.modules.terraform()
   if vim.bo.filetype ~= "terraform" and not find_up("main.tf") then return { text = "" } end
   local ws = memo("tfws", 30000, function()
     return trim(vim.fn.system("terraform workspace show 2>/dev/null"))
   end)
-  return { text = ("  %s "):format(ws ~= "" and ws or "tf"), fg = M.c.base, bg = M.c.pink, gui = "bold" }
+  local short = abbrev(ws ~= "" and ws or "tf", 14)
+  local risk = risk_color(ws)
+  if risk then
+    return { text = (" 󱁢 %s "):format(short), fg = risk.fg, bg = risk.bg, gui = risk.gui }
+  end
+  return { text = (" 󱁢 %s "):format(short), fg = M.c.text, bg = M.c.surface }
 end
 
--- AWS profile
+-- AWS profile — never renders raw access-key shaped strings (defense in depth
+-- against $AWS_PROFILE being set to a session token by mistake).
 function M.modules.aws()
   local p = vim.env.AWS_PROFILE
   if not p or p == "" then return { text = "" } end
-  return { text = ("  %s "):format(p), fg = M.c.base, bg = M.c.peach }
+  if p:match("^A[KS]IA[A-Z0-9]+$") or #p > 40 then return { text = "" } end
+  local short = abbrev(p, 18)
+  local risk = risk_color(p)
+  if risk then
+    return { text = (" 󰸏 %s "):format(short), fg = risk.fg, bg = risk.bg, gui = risk.gui }
+  end
+  return { text = (" 󰸏 %s "):format(short), fg = M.c.text, bg = M.c.surface }
 end
 
 -- BATTERY (macOS) — 11-step gradient on discharge, distinct charging glyphs
@@ -431,7 +458,7 @@ function M.modules.time()
   elseif h >= 17 and h < 20 then glyph = "󰖚"      -- sunset
   else                            glyph = "󰖔" end  -- moon / night
   return { text = (" %s %s "):format(glyph, os.date("%H:%M")),
-           fg = M.c.base, bg = M.c.lavender, gui = "bold" }
+           fg = M.c.text, bg = M.c.surface }
 end
 
 -- ─── EXTENDED MODULES ──────────────────────────────────────────────────────
@@ -483,7 +510,7 @@ function M.modules.project_type()
   if kind == "" then return { text = "" } end
   local icons = { rust = "  ", go = " 󰟓 ", poetry = "  ", node = "  ",
     ruby = "  ", elixir = "  ", make = " 󱁤 ", cmake = " 󰔷 ", bazel = "  ", nix = "  " }
-  return { text = (icons[kind] or "  ") .. kind .. " ", fg = M.c.base, bg = M.c.flamingo, gui = "bold" }
+  return { text = (icons[kind] or "  ") .. kind .. " ", fg = M.c.text, bg = M.c.surface }
 end
 
 -- PACKAGE VERSION — reads this project's own version
@@ -514,7 +541,7 @@ function M.modules.package_version()
     return ""
   end)
   if v == "" then return { text = "" } end
-  return { text = (" 󰏗 v%s "):format(v), fg = M.c.base, bg = M.c.pink }
+  return { text = (" 󰏗 v%s "):format(v), fg = M.c.text, bg = M.c.surface }
 end
 
 -- CMD DURATION — populated by hook in setup(), shows last cmd's runtime
@@ -581,21 +608,19 @@ function M.modules.ram()
   return { text = (" 󰘚 %s %d%% "):format(spark, pct), fg = fg, bg = M.c.surface }
 end
 
--- CLOUD ACCOUNT — gcloud / aws (whichever is set)
+-- CLOUD ACCOUNT — gcloud / aws (whichever is set). Surface bg unless the
+-- account name itself flags risk (e.g. prod-admin@…).
 function M.modules.cloud()
-  -- gcloud first (more common to be set per-shell)
   if vim.env.CLOUDSDK_ACTIVE_CONFIG_NAME or vim.fn.executable("gcloud") == 1 then
     local acct = memo("gcloud", 60000, function()
       return trim(vim.fn.system("gcloud config get-value account 2>/dev/null"))
     end)
     if acct ~= "" and not acct:find("ERROR") then
-      local short = acct:match("([^@]+)") or acct
-      return { text = (" 󱇶 %s "):format(short), fg = M.c.base, bg = M.c.sapphire }
+      local short = abbrev(acct:match("([^@]+)") or acct, 18)
+      local risk = risk_color(acct)
+      if risk then return { text = (" 󱇶 %s "):format(short), fg = risk.fg, bg = risk.bg, gui = risk.gui } end
+      return { text = (" 󱇶 %s "):format(short), fg = M.c.text, bg = M.c.surface }
     end
-  end
-  -- aws fallback
-  if vim.env.AWS_PROFILE then
-    return { text = (" 󰸏 %s "):format(vim.env.AWS_PROFILE), fg = M.c.base, bg = M.c.peach }
   end
   return { text = "" }
 end
@@ -681,12 +706,20 @@ function M.modules.lsp()
   if #clients == 0 then return { text = "" } end
   local names = {}
   for _, c in ipairs(clients) do
-    -- Trim common suffixes so "lua_ls" → "lua", "rust_analyzer" → "rust_analyzer"
     local n = (c.name or "?"):gsub("_ls$", "")
-    table.insert(names, n)
+    names[#names + 1] = n
   end
-  return { text = (" 󰒋 %s "):format(table.concat(names, "·")),
-           fg = M.c.base, bg = M.c.teal, gui = "bold" }
+  -- More than 3 attached clients → "lua·tsserver·+2" form. Total label
+  -- capped at 24 chars before the chip padding so a noisy ecosystem
+  -- (linters + formatters + null_ls) doesn't blow up the chain.
+  local label
+  if #names > 3 then
+    label = table.concat({ names[1], names[2], "+" .. (#names - 2) }, "·")
+  else
+    label = table.concat(names, "·")
+  end
+  if #label > 24 then label = label:sub(1, 23) .. "…" end
+  return { text = (" 󰒋 %s "):format(label), fg = M.c.text, bg = M.c.surface }
 end
 
 -- ─── DIAGNOSTICS ──────────────────────────────────────────────────────────
@@ -1185,12 +1218,20 @@ end
 -- ─── render a chain of segments with powerline separators ──────────────────
 -- Renders into a lualine component string using %#hl#...%* tags. We
 -- pre-register highlight groups for each (fg, bg) pair we use.
+-- `gui` may be a single attribute ("bold") or comma-separated list
+-- ("bold,underline") so that clk() can append an interactivity signifier
+-- without clobbering an existing weight (see clk() below for the rationale
+-- — Norman 2013 affordance ≠ signifier reapplied to dense ambient displays).
 local hl_cache = {}
 local function hl(fg, bg, gui)
   local key = (fg or "") .. ":" .. (bg or "") .. ":" .. (gui or "")
   if hl_cache[key] then return hl_cache[key] end
   local name = "Starship_" .. tostring(vim.tbl_count(hl_cache))
-  vim.api.nvim_set_hl(0, name, { fg = fg, bg = bg, bold = gui == "bold", italic = gui == "italic" })
+  local attrs = { fg = fg, bg = bg }
+  if gui and gui ~= "" then
+    for a in tostring(gui):gmatch("[^,%s]+") do attrs[a] = true end
+  end
+  vim.api.nvim_set_hl(0, name, attrs)
   hl_cache[key] = name
   return name
 end
@@ -1297,11 +1338,31 @@ local function pri(min_cols, fn)
   return fn()
 end
 
--- Attach a click handler to a segment. Skips when segment is empty (the
--- chain ignores empty segments anyway, so attaching would just register
--- dead ids). The handler receives (button, mods, clicks).
+-- Attach a click handler to a segment + signify clickability in-place.
+-- Norman 2013 *Design of Everyday Things* revised edition: an affordance
+-- is wasted if it is not signified. Half of the chips in the chain are
+-- clickable (git → LazyGit, diag → Trouble, tab_undo → picker, etc.) but
+-- without a visible cue the user has to try each one to discover which.
+-- A thin underline is the canonical "in-place interactivity" signifier
+-- from the web's earliest UI conventions — survives monochrome rendering,
+-- works under color blindness, doesn't clobber the chip's color identity
+-- or weight (we merge into existing gui rather than replace).
+--
+-- Hassenzahl 2010 *Experience Design* + 2020s NN/g discoverability work:
+-- the signifier must live IN the affordance, not in a separate help panel
+-- or tooltip. Terminals can't show hover states or cursor changes, but
+-- underline is universal and preserves the rest of the chip's design.
 local function clk(seg, fn)
-  if seg and seg.text and seg.text ~= "" then seg.on_click = fn end
+  if seg and seg.text and seg.text ~= "" then
+    seg.on_click = fn
+    if seg.gui and seg.gui ~= "" then
+      if not tostring(seg.gui):find("underline") then
+        seg.gui = seg.gui .. ",underline"
+      end
+    else
+      seg.gui = "underline"
+    end
+  end
   return seg
 end
 
@@ -1338,64 +1399,80 @@ local function show_battery_detail()
   vim.notify(out, vim.log.levels.INFO, { title = "battery" })
 end
 
+-- Three width tiers: 0 (critical, always), 80 (normal), 120 (wide/ambient).
+-- The old `pri()` function still handles the conditional dispatch — we just
+-- collapse the eight prior thresholds into these three.
 function M.left()
   return M.chain({
+    -- critical: always present, anchor the line
     M.modules.mode(),
     M.modules.macro(),
     M.modules.search(),
     clk(M.modules.conflicts(),              jump_first_conflict),
-    pri(110, M.modules.os),
-    pri(100, M.modules.user_short),
-    M.modules.ssh(),
+    -- file context
     clk(pri( 80, M.modules.dir),            lua(function() require("user.spotlight").open() end)),
-    clk(pri( 80, M.modules.file),           lua(function() vim.cmd("e %") end)),
-    pri(130, M.modules.project_type),
-    pri(140, M.modules.package_version),
-    clk(pri(100, M.modules.git),            first_of("LazyGit", "Neogit")),
-    clk(pri(120, M.modules.gitdiff),        cmd("Gitsigns preview_hunk")),
-    clk(M.modules.diag(),                   first_of("Trouble diagnostics toggle", "TroubleToggle", "Telescope diagnostics")),
-    clk(pri(120, M.modules.lsp),            cmd("Mason")),
-    clk(M.modules.spinner(),                lua(function() require("user.jobs").list() end)),
-    clk(M.modules.tasks(),                  lua(function() require("user.dock").open("tasks") end)),
-    M.modules.save_pulse(),
-    clk(pri(110, M.modules.jira),           lua(function() require("user.jira").show_issue() end)),
-    clk(pri(140, M.modules.todos),          first_of("TodoTrouble", "TodoTelescope")),
-    clk(M.modules.dap_state(),              first_of("DapContinue")),
-    clk(pri(140, M.modules.playbook_led),   lua(function() require("user.playbooks").show() end)),
-    clk(pri(130, M.modules.tab_undo),       lua(function() require("user.tabs").pick() end)),
-    clk(pri(120, M.modules.update),         cmd("Git fetch")),
-    pri(140, M.modules.direnv),
+    clk(    M.modules.file(),               lua(function() vim.cmd("e %") end)),
+    -- git
+    clk(    M.modules.git(),                first_of("LazyGit", "Neogit")),
+    clk(pri( 80, M.modules.gitdiff),        cmd("Gitsigns preview_hunk")),
+    -- problems / language servers
+    clk(    M.modules.diag(),               first_of("Trouble diagnostics toggle", "TroubleToggle", "Telescope diagnostics")),
+    clk(pri( 80, M.modules.lsp),            cmd("Mason")),
+    -- live indicators
+    clk(pri( 80, M.modules.spinner),        lua(function() require("user.jobs").list() end)),
+    clk(    M.modules.tasks(),              lua(function() require("user.dock").open("tasks") end)),
+            M.modules.save_pulse(),
+    clk(    M.modules.dap_state(),          first_of("DapContinue")),
+    -- secondary (normal tier)
+    clk(pri( 80, M.modules.jira),           lua(function() require("user.jira").show_issue() end)),
+    clk(pri( 80, M.modules.todos),          first_of("TodoTrouble", "TodoTelescope")),
+    clk(pri( 80, M.modules.tab_undo),       lua(function() require("user.tabs").pick() end)),
+    clk(pri( 80, M.modules.playbook_led),   lua(function() require("user.playbooks").show() end)),
+    clk(pri( 80, M.modules.update),         cmd("Git fetch")),
+    -- ambient (wide tier)
+    pri(120, M.modules.os),
+    pri(120, M.modules.user_short),
+            M.modules.ssh(),
+    pri(120, M.modules.project_type),
+    pri(120, M.modules.package_version),
+    pri(120, M.modules.direnv),
   }, { side = "left" })
 end
 
 function M.right()
   return M.chain({
-    pri(110, M.modules.heartbeat),
+    -- ambient signals — wide tier only
+    pri(120, M.modules.heartbeat),
     clk(pri(120, M.modules.engage),         lua(function() require("user.state").show() end)),
-    clk(pri(110, M.modules.streak),         lua(function() require("user.today").show() end)),
+    clk(pri(120, M.modules.streak),         lua(function() require("user.today").show() end)),
     pri(120, M.modules.cmd_duration),
-    clk(pri(140, M.modules.ai),             cmd("AI")),
-    clk(pri(140, M.modules.pomo),           first_of("TimerStop", "TimerSession")),
-    pri(150, M.modules.lua),
-    pri(150, M.modules.python),
-    pri(150, M.modules.node),
-    pri(150, M.modules.deno),
-    pri(150, M.modules.bun),
-    pri(150, M.modules.go),
-    pri(150, M.modules.rust),
-    pri(150, M.modules.ruby),
-    pri(150, M.modules.elixir),
-    pri(150, M.modules.java),
-    pri(150, M.modules.zig),
-    pri(150, M.modules.php),
-    pri(160, M.modules.terraform),
-    pri(160, M.modules.docker),
-    pri(160, M.modules.k8s),
-    pri(150, M.modules.cloud),
-    clk(pri(130, M.modules.cpu),            cmd("PerfHud")),
-    clk(pri(130, M.modules.ram),            cmd("PerfHud")),
+    -- assistants / timers
+    clk(pri( 80, M.modules.ai),             cmd("AI")),
+    clk(pri(120, M.modules.pomo),           first_of("TimerStop", "TimerSession")),
+    -- runtimes — icon-only at ≥120
+    pri(120, M.modules.lua),
+    pri(120, M.modules.python),
+    pri(120, M.modules.node),
+    pri(120, M.modules.deno),
+    pri(120, M.modules.bun),
+    pri(120, M.modules.go),
+    pri(120, M.modules.rust),
+    pri(120, M.modules.ruby),
+    pri(120, M.modules.elixir),
+    pri(120, M.modules.java),
+    pri(120, M.modules.zig),
+    pri(120, M.modules.php),
+    -- ops context — risky-colored when prod/admin/etc.
+    pri(120, M.modules.terraform),
+    pri(120, M.modules.docker),
+    pri(120, M.modules.k8s),
+    pri(120, M.modules.cloud),
+    pri(120, M.modules.aws),
+    -- machine / clock
+    clk(pri(120, M.modules.cpu),            cmd("PerfHud")),
+    clk(pri(120, M.modules.ram),            cmd("PerfHud")),
     clk(pri(120, M.modules.battery),        show_battery_detail),
-    clk(M.modules.time(),                   cmd("Today")),
+    clk(pri(120, M.modules.time),           cmd("Today")),
   }, { side = "right" })
 end
 

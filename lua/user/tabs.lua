@@ -1260,8 +1260,20 @@ local function open_picker(mode)
     end,
   })
 
+  -- Affordance ≠ signifier (Norman 2013 *Design of Everyday Things* revised
+  -- edition; modern: 2020s command-palette conventions in VSCode / Linear /
+  -- Raycast / Cursor — every in-panel action is published inline as text).
+  -- The C-r / C-x bindings exist as affordances; without a signifier they're
+  -- invisible to first-time pickers. results_title sits above the rows where
+  -- the user's eye is already going — same locus of attention, no extra
+  -- keystroke required to learn the surface.
+  local kb_legend = (mode == "close")
+    and "<CR> close · <C-r> rename · <C-x> drop"
+    or  "<CR> jump · <C-r> rename · <C-x> close (ghost: <CR> restore · <C-x> drop)"
+
   telescope_pickers.new({}, {
-    prompt_title = mode == "close" and "tabs · close" or "tabs · jump",
+    prompt_title  = mode == "close" and "tabs · close" or "tabs · jump",
+    results_title = kb_legend,
     previewer = tab_previewer,
     finder = finders.new_table({
       results = items,
