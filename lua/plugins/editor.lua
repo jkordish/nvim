@@ -134,7 +134,19 @@ return {
         if skip_filetype[filetype] then return "" end
         -- Empty filetype too — no parser, no LSP fold ranges
         if filetype == "" then return "" end
-        return { "lsp", "treesitter" }
+        -- ufo's provider chain reads ONLY [main, fallback] — see
+        -- ufo/provider/init.lua:28 (`providers[1], providers[2]`); any
+        -- third entry is silently dropped. So the second slot MUST be a
+        -- provider that never throws UfoFallbackException. "indent" is
+        -- the only built-in that satisfies that (it derives ranges from
+        -- buffer indentation, which always exists). "lsp" is dropped from
+        -- the chain because (a) the slot is taken by indent for safety,
+        -- and (b) most language servers don't implement textDocument/
+        -- foldingRange well — treesitter folds are higher quality in
+        -- practice. The previous chain `{"lsp", "treesitter"}` bubbled
+        -- UfoFallbackException as an unhandled promise rejection whenever
+        -- both LSP folds were absent AND the filetype had no parser.
+        return { "treesitter", "indent" }
       end,
       fold_virt_text_handler = function(virt_text, lnum, end_lnum, width, truncate)
         local suffix = ("  󰁂 %d "):format(end_lnum - lnum)

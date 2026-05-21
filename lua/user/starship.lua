@@ -1050,6 +1050,25 @@ function M.modules.dap_state()
   end
 end
 
+-- Ambient transparency (Pousman & Stasko 2006 "A Taxonomy of Ambient
+-- Information Systems"; Hassenzahl 2010 "Experience Design"; modern:
+-- explainable AI / transparent automation 2020s applied to any system
+-- holding state for the user). The persistent undo stack quietly carries
+-- closed-tab recovery across sessions — without surfacing that state in
+-- the periphery, the user has no way to *know* the tool is holding work
+-- for them. Risko & Gilbert (2016) explicitly call this out as the trust
+-- gap that makes cognitive offloading fail in practice.
+--
+-- Invisible when the stack is empty (zero state = zero ink — calm tech
+-- preserved). One soft `↺N` chip when there's recovery available. Click
+-- opens the picker, which shows ghost rows for every closed tab.
+function M.modules.tab_undo()
+  local ok, tabs = pcall(require, "user.tabs"); if not ok then return { text = "" } end
+  local n = (tabs.closed_count and tabs.closed_count()) or 0
+  if n == 0 then return { text = "" } end
+  return { text = (" ↺%d "):format(n), fg = M.c.base, bg = M.c.green, gui = "bold" }
+end
+
 -- Drop cached entries when the buffer is wiped so the tables don't leak.
 local function _flush_buf_cache(args)
   _todo_cache[args.buf] = nil
@@ -1343,6 +1362,7 @@ function M.left()
     clk(pri(140, M.modules.todos),          first_of("TodoTrouble", "TodoTelescope")),
     clk(M.modules.dap_state(),              first_of("DapContinue")),
     clk(pri(140, M.modules.playbook_led),   lua(function() require("user.playbooks").show() end)),
+    clk(pri(130, M.modules.tab_undo),       lua(function() require("user.tabs").pick() end)),
     clk(pri(120, M.modules.update),         cmd("Git fetch")),
     pri(140, M.modules.direnv),
   }, { side = "left" })
