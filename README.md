@@ -560,7 +560,7 @@ Snacks dashboard pops with `good afternoon, joseph.` and three actions. Pick `r`
 | `perfhud`      | `:PerfHUD` | `<leader>uP` | Live FPS/RSS/LSP req rate/top-5 slowest plugins float |
 | `present`      | `:Present` | `<leader>P` | Markdown → slideshow split on `# H1` |
 | `workspace`    | `:WorkspaceSave/Load/List` | `<leader>WS/WR/WL` | Tab×window+harpoon snapshot per cwd |
-| `tabs`         | `:TabRename` / `:TabPick{,Close}` / `:TabLast` / `:TabNewNamed` / `:TabCloseOthers` / `:TabMove{Left,Right}` | `<leader><tab>{r,a,p,D,N,o,1-9,<tab>,<,>}` | Named tabs persisted to `tab_names.json` · clickable chips (L=jump, R=rename, M=close) · numeric direct-jump `1-9` · `<tab><tab>` toggles MRU (`↶` chip marks the target) · picker is MRU-sorted with inline `<C-r>` rename / `<C-x>` close |
+| `tabs`         | `:Tab{Rename,Pick,PickClose,Last,UndoClose,NewNamed,CloseOthers,JumpLabel,Move{Left,Right}}` | `<M-j>{letter}` · `<M-1>..<M-9>` · `<M-\`>` · `<leader><tab>{r,a,p,D,N,o,u,1-9,<tab>,<,>}` | HCI-grounded named tabs: tabid-keyed names + labels survive `:tabmove` · `<M-j>{letter}` stable jump derived from name · clickable chips · `<tab><tab>` toggles MRU (`↶` marks target) · picker is MRU-sorted with previewer · `<tab>u` undo-close (10-deep) · `<tab>o` confirms if ≥2 named tabs would die |
 | `repl`         | `:Repl*` | `<leader>rt/rl/rp/rb/rr` | Per-filetype REPL with send line/paragraph/buffer/selection |
 | `coverage`     | `:Coverage{Show,Hide,Refresh}` | `<leader>uc/uC` | Cobertura/LCOV gutter signs |
 | `jobs`         | `:Job <name> <cmd>` / `:JobList` | `<leader>uj` | Async job queue; spinner in lualine |
@@ -752,19 +752,33 @@ Per-language: Go `<leader>dgt/dgl` · Python `<leader>dpt/dpc/dps`
 ### Workspace (`<leader>W`)
 `WS` save · `WR` restore · `WL` list
 
-### Tabs (`<leader><tab>`) — named, clickable, MRU-aware
+### Tabs (`<leader><tab>`) — named, clickable, HCI-grounded
 | key | action |
 |---|---|
+| **`<M-j>`{letter}** | **jump by stable letter label** — each tab gets a single-char label derived from its name (`api` → `[a]`); pressing `<M-j>` shows the menu, the next keystroke selects |
+| `<M-1>`..`<M-9>` / `<M-\`>` | chord-free positional jump to tab N / toggle MRU |
 | `<leader><tab>n` / `<leader><tab>N` | new tab (auto-named) / new + prompt for name |
-| `<leader><tab>c` / `<leader><tab>o` / `<leader><tab>D` | close current / close all others / pick one to close |
+| `<leader><tab>c` / `<leader><tab>o` / `<leader><tab>D` | close current / close all others (confirms if ≥2 are named) / pick one to close |
+| `<leader><tab>u` | **undo close** — reopen the most recently closed tab (up to 10 deep, restores name + cwd + files + cursor positions; rebuilds multi-window tabs as vsplits) |
 | `<leader><tab>r` / `<leader><tab>a` | rename interactively / revert to auto-name (`cwd:t`) |
 | `<leader><tab>]` / `<leader><tab>[` | next / prev (vim's `gt` / `gT` also work) |
-| `<leader><tab><tab>` | toggle to most recently used tab (look for the `↶` chip in the tabline — that's where it'll send you) |
-| `<leader><tab>1`..`<leader><tab>9` | direct jump to tab N |
-| `<leader><tab>p` | pick by name — MRU-sorted, `<CR>` jump · `<C-r>` rename · `<C-x>` close (stays in picker) |
+| `<leader><tab><tab>` | toggle to most recently used tab (look for the `↶` chip in the tabline) |
+| `<leader><tab>1`..`<leader><tab>9` | positional jump (discoverable in which-key menu) |
+| `<leader><tab>p` | pick by name — MRU-sorted, previewer shows files in the highlighted tab, `<CR>` jump · `<C-r>` rename · `<C-x>` close |
 | `<leader><tab>>` / `<leader><tab><` | move current tab right / left |
 
-Tabline chips are clickable: **L**eft jumps · **R**ight renames · **M**iddle closes. The active tab gets a `▎` accent bar; the MRU toggle target gets `↶` so you can *see* where `<leader><tab><tab>` will go. Names persist across sessions in `~/.local/state/nvim/tab_names.json`.
+Each chip in the tabline shows `▎N [label] icon name`. The active tab's accent bar is `▎`; the MRU toggle target gets `↶`. Names persist across sessions in `~/.local/state/nvim/tab_names.json`.
+
+**HCI grounding** — the design choices have specific principles behind them:
+
+- **Stable identity** (Nielsen #4 consistency, recognition-over-recall): names and letter labels are keyed by tabpage *id*, not tabnr, so `:tabmove` doesn't silently shuffle either one. The tab you named `api` keeps the name *and* the `[a]` label wherever you drag it. Labels are assigned in tabid (creation) order so the first-created `src` gets `[s]` regardless of where it currently sits.
+- **Fitts's Law** (one-keystroke target): `<M-j>{letter}` is two keystrokes for any tab; `<M-N>` is one keystroke for tabs 1–9; click is mouse-free. Multiple paths to the same target with different speed/memorability tradeoffs (Nielsen #7: flexibility).
+- **Error prevention** (Nielsen #5): `close_others` confirms when ≥2 named tabs would be killed (named = invested), but stays silent for unnamed scratch tabs. `undo_close` is the universal safety net — every close is recoverable for 10 closes deep.
+- **System status visibility** (Nielsen #1): tabline shows current (`▎`), toggle target (`↶`), label (`[x]`), modified (`●`), file icon, and name in every chip — no hidden state.
+- **Recognition rather than recall**: picker shows label, name, MRU rank, win count, modified status, and a file-list preview pane in one panel. The label appears in both the tabline and the picker — incidental learning makes the muscle memory build itself.
+- **Calm Technology** (Case, 2014): `set showtabline=1` so the tabline disappears entirely when there's only one tab. Zero-information UI is invisible UI; the row of vertical space is given back to actual content. The tabline reappears the moment a second tab exists.
+- **Recovery as first-class** (anticipatory design): the picker mixes live tabs with **ghost rows** for the undo-close stack — selecting `↺ src (closed · 2 files)` restores it. Recovery surfaces *in the same flow* you'd already use to find a tab, instead of behind a separate keymap. `<C-x>` on a ghost row drops it from the stack; `<C-x>` on a live tab closes it. Same gesture, both "remove this entry from view" (Nielsen #4 consistency across modes).
+- **Feedforward / self-revealing gestures** (Vermeulen et al., 2013): pressing `<M-j>` to enter label-jump mode flips every `[x]` chip in the tabline to a high-contrast peach background — the affordance reveals itself *in the region the user is already looking at*, with no cmdline echo to split attention. Out of mode, labels rest in the calm accent. Mode reveals itself synchronously through the affordance that already lives there, instead of forcing the eye down to a separate menu.
 
 ### Sessions / Macros (`<leader>q`)
 `qs` restore cwd · `ql` restore last · `qd` stop saving · `qm` macros pick · `qM` save reg q as named macro

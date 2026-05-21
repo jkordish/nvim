@@ -366,6 +366,7 @@ return {
           { "<leader>T", group = "tasks" },
           { "<leader>O", group = "GitHub (octo)" },
           { "<leader>q", group = "quit / macros" },
+          { "<leader><tab>", group = "tabs" },
         },
         -- Style hooks tying back to the brand palette
         icons = {

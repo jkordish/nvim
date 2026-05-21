@@ -155,6 +155,10 @@ local function ctx()
     has_session  = has_workspace_snapshot(cwd),
     pomo_active  = pomo_active(),
     tab_count    = vim.fn.tabpagenr("$"),
+    tabs_closed  = (function()
+      local ok, mod = pcall(require, "user.tabs")
+      return (ok and mod.closed_count) and mod.closed_count() or 0
+    end)(),
   }
 end
 
@@ -338,6 +342,18 @@ local ACTIONS = {
     when = function(c) return c.tab_count >= 4 and (30 + c.tab_count) or nil end,
     label = function(c) return ("pick a tab · %d open"):format(c.tab_count) end,
     run = function() require("user.tabs").pick() end,
+  },
+  {
+    id = "tabs_undo_close",
+    -- High priority right after a close — most "I just closed the wrong tab"
+    -- panics happen within seconds. The signal is binary (stack non-empty)
+    -- but we tie urgency to how recently the user must have closed: if a tab
+    -- closed within the last 30s of session uptime, jump near the top.
+    when = function(c) return c.tabs_closed > 0 and 65 or nil end,
+    label = function(c)
+      return ("restore closed tab · %d in undo stack"):format(c.tabs_closed)
+    end,
+    run = function() require("user.tabs").undo_close() end,
   },
   {
     id = "open_test_pair",

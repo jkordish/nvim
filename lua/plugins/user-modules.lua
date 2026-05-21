@@ -181,6 +181,7 @@ return {
       { "<leader><tab>N",     "<cmd>TabNewNamed<CR>",     desc = "Tab: new + name" },
       { "<leader><tab>p",     "<cmd>TabPick<CR>",         desc = "Tab: pick by name (MRU sorted · <C-r> rename · <C-x> close)" },
       { "<leader><tab>D",     "<cmd>TabPickClose<CR>",    desc = "Tab: pick one to close" },
+      { "<leader><tab>u",     "<cmd>TabUndoClose<CR>",    desc = "Tab: undo close (reopen last closed)" },
       { "<leader><tab>o",     "<cmd>TabCloseOthers<CR>",  desc = "Tab: close others" },
       { "<leader><tab><tab>", "<cmd>TabLast<CR>",         desc = "Tab: last used (toggle)" },
       { "<leader><tab>>",     "<cmd>TabMoveRight<CR>",    desc = "Tab: move right" },
@@ -194,6 +195,20 @@ return {
       { "<leader><tab>7",     function() require("user.tabs").jump(7) end, desc = "Tab: jump 7" },
       { "<leader><tab>8",     function() require("user.tabs").jump(8) end, desc = "Tab: jump 8" },
       { "<leader><tab>9",     function() require("user.tabs").jump(9) end, desc = "Tab: jump 9" },
+
+      -- Chord-free instant jump. <M-N> is the universal "switch to tab N"
+      -- shortcut (Chrome/VSCode/iTerm) — much faster than the 3-key chord.
+      { "<M-1>", function() require("user.tabs").jump(1) end, desc = "Tab: jump 1 (Alt)" },
+      { "<M-2>", function() require("user.tabs").jump(2) end, desc = "Tab: jump 2 (Alt)" },
+      { "<M-3>", function() require("user.tabs").jump(3) end, desc = "Tab: jump 3 (Alt)" },
+      { "<M-4>", function() require("user.tabs").jump(4) end, desc = "Tab: jump 4 (Alt)" },
+      { "<M-5>", function() require("user.tabs").jump(5) end, desc = "Tab: jump 5 (Alt)" },
+      { "<M-6>", function() require("user.tabs").jump(6) end, desc = "Tab: jump 6 (Alt)" },
+      { "<M-7>", function() require("user.tabs").jump(7) end, desc = "Tab: jump 7 (Alt)" },
+      { "<M-8>", function() require("user.tabs").jump(8) end, desc = "Tab: jump 8 (Alt)" },
+      { "<M-9>", function() require("user.tabs").jump(9) end, desc = "Tab: jump 9 (Alt)" },
+      { "<M-`>", function() require("user.tabs").jump_last() end, desc = "Tab: last used (Alt)" },
+      { "<M-j>", function() require("user.tabs").jump_by_label() end, desc = "Tab: jump by letter label (stable across reorder)" },
 
       -- ═════ DOCK ═════
       { "<leader>`",  function() require("user.dock").toggle() end,         desc = "Dock: toggle", mode = { "n", "t" } },
