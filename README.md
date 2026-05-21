@@ -152,7 +152,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 And the better way:
 ```bash
-./scripts/doctor.sh issues
+./scripts/doctor.sh           # actionable issues only (curated noise filter)
 ```
 
 ---
@@ -382,7 +382,7 @@ You'll use them in that order over weeks. `<leader>` is muscle memory. `<Space><
 - **Jupyter** — Quarto + Molten with cell execution and inline plot rendering (opt-in)
 - **Obsidian** — full second-brain (`<leader>nn`, `nt`, `nb`, `ng`)
 - **Pomodoro** — `<leader>np1/2/3`, countdown shows in statusline
-- **Devcontainers** — VSCode Remote Containers parity (`<leader>Cu`)
+- **Devcontainers** — VSCode Remote Containers parity (`<leader>Du`)
 - **Markdown preview** in browser with synced scroll
 - **Live server** for HTML/CSS/JS dev
 
@@ -436,7 +436,7 @@ Eight novelty modules behind a single command: `aurora`, `matrix`, `tarot`, `tin
 | Run and Debug | DAP + DAP-UI | `<leader>du` |
 | Tasks (`tasks.json`) | Overseer | `<leader>Tt` |
 | Testing | Neotest | `<leader>ts` |
-| Remote Containers | devcontainer.nvim | `<leader>Cu` |
+| Remote Containers | devcontainer.nvim | `<leader>Du` |
 | Jupyter notebooks | Quarto + Molten + jupytext | `<leader>Ji` |
 | Live Server | live-server.nvim | `<leader>Wl` |
 | REST Client | kulala.nvim (`.http` files) | `<leader>Rs` |
@@ -557,9 +557,10 @@ Snacks dashboard pops with `good afternoon, joseph.` and three actions. Pick `r`
 | `state`        | `:UserState{,Clear,Export,Import}` | `<leader>us` | Inspect every persistent state file · sizes / ages / descriptions · selective clear · tar export/import across machines |
 | `yankring`     | — | `<leader>p` | Persistent yank history of 50, telescope picker with syntax preview |
 | `ai_cmd`       | `:AI <intent>` | `<leader>ai` | Direct one-shot Anthropic API call with cursor context |
-| `perfhud`      | `:PerfHUD` | `<leader>up` | Live FPS/RSS/LSP req rate/top-5 slowest plugins float |
+| `perfhud`      | `:PerfHUD` | `<leader>uP` | Live FPS/RSS/LSP req rate/top-5 slowest plugins float |
 | `present`      | `:Present` | `<leader>P` | Markdown → slideshow split on `# H1` |
 | `workspace`    | `:WorkspaceSave/Load/List` | `<leader>WS/WR/WL` | Tab×window+harpoon snapshot per cwd |
+| `tabs`         | `:TabRename` / `:TabPick{,Close}` / `:TabLast` / `:TabNewNamed` / `:TabCloseOthers` / `:TabMove{Left,Right}` | `<leader><tab>{r,a,p,D,N,o,1-9,<tab>,<,>}` | Named tabs persisted to `tab_names.json` · clickable chips (L=jump, R=rename, M=close) · numeric direct-jump `1-9` · `<tab><tab>` toggles MRU (`↶` chip marks the target) · picker is MRU-sorted with inline `<C-r>` rename / `<C-x>` close |
 | `repl`         | `:Repl*` | `<leader>rt/rl/rp/rb/rr` | Per-filetype REPL with send line/paragraph/buffer/selection |
 | `coverage`     | `:Coverage{Show,Hide,Refresh}` | `<leader>uc/uC` | Cobertura/LCOV gutter signs |
 | `jobs`         | `:Job <name> <cmd>` / `:JobList` | `<leader>uj` | Async job queue; spinner in lualine |
@@ -622,7 +623,9 @@ Single entry point, lazy-loaded. `:Play` opens a picker; `:Play <name>` runs dir
 `~/.config/nvim/scripts/doctor.sh` runs nvim headless, captures `:checkhealth` + `:messages` + `lazy.stats()`, and surfaces only the actionable issues. Exit code = number of `❌ ERROR` lines.
 
 ```bash
-./scripts/doctor.sh              # default: issues (errors + warns), grouped by section
+./scripts/doctor.sh              # default: actionable — issues minus a curated noise list
+./scripts/doctor.sh issues       # all errors + warns (no noise filter)
+./scripts/doctor.sh keymaps      # static scan: <leader> collisions across all specs
 ./scripts/doctor.sh stats        # plugin count + startup ms
 ./scripts/doctor.sh messages     # just :messages
 ./scripts/doctor.sh health       # full :checkhealth (~10k lines)
@@ -632,10 +635,14 @@ Single entry point, lazy-loaded. `:Play` opens a picker; `:Play <name>` runs dir
 ./scripts/doctor.sh section snacks   # one plugin's section
 ```
 
+The `actionable` filter drops lines you've knowingly accepted: snacks modules explicitly disabled in `extras.lua`, headless-only artifacts (kitty graphics protocol, dashboard "not ready"), optional overseer adapters with no project file, mason languages you don't write, and the lazy/luajit 5.1 false-positive. The noise list lives at the top of `doctor.sh` — extend it when a new line trains your eye to skip past it. Real regressions still appear because they won't match.
+
+The `keymaps` mode statically parses every `<leader>` binding declared in `lua/plugins/*.lua` and `lua/core/*.lua`. lazy.nvim silently last-wins on collisions, so without this they only surface when you press the docs-promised key and get the wrong feature. Which-key `group = "..."` entries and buffer-local LSP-on-attach bindings are excluded — only real global collisions report.
+
 Polls until the checkhealth buffer stabilizes (≥1s of no growth, 12s max). CI-friendly:
 
 ```bash
-if ./scripts/doctor.sh issues; then echo "clean"; fi
+if ./scripts/doctor.sh; then echo "clean"; fi
 ```
 
 ---
@@ -745,6 +752,20 @@ Per-language: Go `<leader>dgt/dgl` · Python `<leader>dpt/dpc/dps`
 ### Workspace (`<leader>W`)
 `WS` save · `WR` restore · `WL` list
 
+### Tabs (`<leader><tab>`) — named, clickable, MRU-aware
+| key | action |
+|---|---|
+| `<leader><tab>n` / `<leader><tab>N` | new tab (auto-named) / new + prompt for name |
+| `<leader><tab>c` / `<leader><tab>o` / `<leader><tab>D` | close current / close all others / pick one to close |
+| `<leader><tab>r` / `<leader><tab>a` | rename interactively / revert to auto-name (`cwd:t`) |
+| `<leader><tab>]` / `<leader><tab>[` | next / prev (vim's `gt` / `gT` also work) |
+| `<leader><tab><tab>` | toggle to most recently used tab (look for the `↶` chip in the tabline — that's where it'll send you) |
+| `<leader><tab>1`..`<leader><tab>9` | direct jump to tab N |
+| `<leader><tab>p` | pick by name — MRU-sorted, `<CR>` jump · `<C-r>` rename · `<C-x>` close (stays in picker) |
+| `<leader><tab>>` / `<leader><tab><` | move current tab right / left |
+
+Tabline chips are clickable: **L**eft jumps · **R**ight renames · **M**iddle closes. The active tab gets a `▎` accent bar; the MRU toggle target gets `↶` so you can *see* where `<leader><tab><tab>` will go. Names persist across sessions in `~/.local/state/nvim/tab_names.json`.
+
 ### Sessions / Macros (`<leader>q`)
 `qs` restore cwd · `ql` restore last · `qd` stop saving · `qm` macros pick · `qM` save reg q as named macro
 
@@ -766,7 +787,7 @@ Per-language: Go `<leader>dgt/dgl` · Python `<leader>dpt/dpc/dps`
 | `<leader>D` | Database UI (dadbod) |
 | `<leader>k` | Kubernetes panel |
 | `<leader>Wl` / `<leader>Wp` / `<leader>Wc` | live server / color picker / convert color |
-| `<leader>Cu` / `<leader>Cd` / `<leader>Ca` / `<leader>Cx` / `<leader>Cl` | devcontainer: up / down / attach / exec / logs |
+| `<leader>Du` / `<leader>Dd` / `<leader>Da` / `<leader>Dx` / `<leader>Dl` | devcontainer: up / down / attach / exec / logs |
 | `<leader>?h` / `<leader>?d` / `<leader>?D` | cheat.sh / devdocs current ft / devdocs search |
 
 ### REST (`.http` buffers, `<leader>R`)
@@ -980,11 +1001,11 @@ Change a token, every panel using it updates. Five surfaces and three panels spe
 
 ## Troubleshooting
 
-**First step for any weirdness:** `./scripts/doctor.sh issues`.
+**First step for any weirdness:** `./scripts/doctor.sh` (actionable signal, noise filtered).
 
 | Symptom | Fix |
 |---|---|
-| "I don't know what's broken" | `./scripts/doctor.sh issues` |
+| "I don't know what's broken" | `./scripts/doctor.sh` |
 | Wall of treesitter errors on open | Missing tree-sitter CLI. `brew install tree-sitter-cli` then `:TSUpdate` |
 | Icons look broken / question marks | Set your terminal font to a Nerd Font (`brew install --cask font-jetbrains-mono-nerd-font`) |
 | Copilot says "not authenticated" | `:Copilot auth` and follow the device-code link |

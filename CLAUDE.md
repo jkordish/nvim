@@ -4,14 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A personal Neovim distribution (nvim 0.12+) built on `lazy.nvim` with ~30 plugin specs and ~45 hand-rolled native Lua modules under `lua/user/`. There is no build step, no test suite, no package manifest. Changes are validated by launching Neovim and observing behavior.
+A personal Neovim distribution (nvim 0.12+) built on `lazy.nvim` with ~30 plugin spec files (113 plugins total) and ~60 hand-rolled native Lua modules under `lua/user/`. There is no build step, no test suite, no package manifest. Changes are validated by launching Neovim and observing behavior.
 
 ## Commands
 
 ```bash
-./scripts/doctor.sh issues       # primary health check — runs nvim headless,
-                                 # captures :checkhealth + :messages, surfaces
-                                 # only errors+warns. Exit code = # of errors.
+./scripts/doctor.sh              # default: actionable — issues minus a curated
+                                 # noise list (intentional disables, optional
+                                 # adapters, headless-only artifacts).
+./scripts/doctor.sh issues       # all errors+warns, no noise filter
+./scripts/doctor.sh keymaps      # static scan for <leader> collisions across
+                                 # lua/plugins/*.lua + lua/core/*.lua. Run this
+                                 # after editing any spec's `keys = {...}`.
 ./scripts/doctor.sh stats        # plugin count + startup ms
 ./scripts/doctor.sh section <x>  # one plugin's :checkhealth section
 ./scripts/doctor.sh full         # entire report
@@ -81,7 +85,7 @@ init.lua                   entry point, 5 lines
 lua/core/                  options · keymaps · autocmds · lazy bootstrap
 lua/plugins/               30 lazy specs
   user-modules.lua         loads ALL of lua/user/*; owns user-module keymaps
-lua/user/                  ~45 first-party modules (one feature each)
+lua/user/                  ~60 first-party modules (one feature each)
 lua/user/_play/            8 novelty toys behind :Play picker
 scripts/doctor.sh          headless healthcheck (use this, not :checkhealth)
 ```

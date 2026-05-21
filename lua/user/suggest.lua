@@ -154,6 +154,7 @@ local function ctx()
     last_other   = last_other_file(),
     has_session  = has_workspace_snapshot(cwd),
     pomo_active  = pomo_active(),
+    tab_count    = vim.fn.tabpagenr("$"),
   }
 end
 
@@ -329,6 +330,15 @@ local ACTIONS = {
   },
 
   -- ─── new wave: enriched-context actions ─────────────────────────────────
+  {
+    id = "tabs_pick",
+    -- Surfaces once you have enough tabs that scanning the tabline is slower
+    -- than picking by name. Scales with count so a 6-tab session beats a
+    -- 4-tab one for priority.
+    when = function(c) return c.tab_count >= 4 and (30 + c.tab_count) or nil end,
+    label = function(c) return ("pick a tab · %d open"):format(c.tab_count) end,
+    run = function() require("user.tabs").pick() end,
+  },
   {
     id = "open_test_pair",
     when = function(c) return c.test_pair and 58 or nil end,

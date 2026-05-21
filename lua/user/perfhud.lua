@@ -1,6 +1,6 @@
 -- Performance HUD: live floating window showing redraw FPS, LSP request rate,
 -- RSS memory, top 5 slowest-loading plugins, attached LSP clients per buffer.
--- Toggle with :PerfHUD or <leader>up.
+-- Toggle with :PerfHUD or <leader>uP.
 local M = {}
 
 local state = { win = nil, buf = nil, timer = nil, last_redraw = 0, frames = 0, fps = 0, lsp_reqs = 0, last_reset = 0 }

@@ -108,8 +108,10 @@ return {
     keys = {
       { "<leader>.",  function() Snacks.scratch() end, desc = "Scratch buffer" },
       { "<leader>S",  function() Snacks.scratch.select() end, desc = "Select scratch" },
-      { "<leader>z",  function() Snacks.zen() end, desc = "Zen mode" },
-      { "<leader>Z",  function() Snacks.zen.zoom() end, desc = "Zoom (zen+max)" },
+      -- Zen lives under <leader>uz / <leader>uZ to keep <leader>z free for
+      -- user.recall (the daily "back" button — undo last context shift).
+      { "<leader>uz", function() Snacks.zen() end, desc = "Zen mode" },
+      { "<leader>uZ", function() Snacks.zen.zoom() end, desc = "Zoom (zen+max)" },
       { "<leader>gB", function() Snacks.gitbrowse() end, mode = { "n", "v" }, desc = "Browse on remote (GitHub/etc)" },
       { "<leader>un", function() Snacks.notifier.hide() end, desc = "Dismiss notifications" },
       { "]]",         function() Snacks.words.jump(vim.v.count1) end, desc = "Next reference" },

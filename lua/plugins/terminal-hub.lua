@@ -62,12 +62,13 @@ return {
     "https://codeberg.org/esensar/nvim-dev-container",
     cmd = { "DevcontainerUp", "DevcontainerStart", "DevcontainerStop", "DevcontainerAttach", "DevcontainerExec", "DevcontainerLogs", "DevcontainerEditDockerfile", "DevcontainerEditNearestDockerfile" },
     keys = {
-      { "<leader>Cu", "<cmd>DevcontainerUp<CR>",      desc = "Devcontainer up" },
-      { "<leader>Cs", "<cmd>DevcontainerStop<CR>",    desc = "Devcontainer stop" },
-      { "<leader>Cd", "<cmd>DevcontainerStop<CR>",    desc = "Devcontainer down" },
-      { "<leader>Cl", "<cmd>DevcontainerLogs<CR>",    desc = "Devcontainer logs" },
-      { "<leader>Ca", "<cmd>DevcontainerAttach<CR>",  desc = "Devcontainer attach" },
-      { "<leader>Cx", "<cmd>DevcontainerExec<CR>",    desc = "Devcontainer exec" },
+      -- Devcontainer lives under <leader>D to keep <leader>C free for
+      -- Confluence (user.confluence owns the C namespace).
+      { "<leader>Du", "<cmd>DevcontainerUp<CR>",      desc = "Devcontainer up" },
+      { "<leader>Dd", "<cmd>DevcontainerStop<CR>",    desc = "Devcontainer down" },
+      { "<leader>Dl", "<cmd>DevcontainerLogs<CR>",    desc = "Devcontainer logs" },
+      { "<leader>Da", "<cmd>DevcontainerAttach<CR>",  desc = "Devcontainer attach" },
+      { "<leader>Dx", "<cmd>DevcontainerExec<CR>",    desc = "Devcontainer exec" },
     },
     config = function()
       require("devcontainer").setup({
