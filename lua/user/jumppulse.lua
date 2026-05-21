@@ -13,18 +13,37 @@ local DURATION = 320
 
 local function _pulse(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
-  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
-  local id = vim.api.nvim_buf_set_extmark(bufnr, NS, line, 0, {
-    end_row = line + 1, end_col = 0,
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  local lc = vim.api.nvim_buf_line_count(bufnr)
+  if lc == 0 then return end
+  -- Schedule races: by the time we fire, the current window may not be
+  -- showing bufnr anymore, so cursor[1] can be past bufnr's line count.
+  -- Resolve the cursor against the window currently showing bufnr; if none,
+  -- fall back to row 1 (still a valid pulse target).
+  local line
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      line = vim.api.nvim_win_get_cursor(win)[1] - 1
+      break
+    end
+  end
+  if not line then line = 0 end
+  if line >= lc then line = lc - 1 end
+  if line < 0 then return end
+  local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, line, 0, {
+    end_row = math.min(line + 1, lc), end_col = 0,
     hl_group = "UserPulse",     -- defined by user.pulse (shared)
     hl_eol = true, priority = 200,
   })
+  if not ok then return end
   local closed = false
   local timer = vim.uv.new_timer()
   timer:start(DURATION, 0, vim.schedule_wrap(function()
     if closed then return end
     closed = true
-    pcall(vim.api.nvim_buf_del_extmark, bufnr, NS, id)
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      pcall(vim.api.nvim_buf_del_extmark, bufnr, NS, id)
+    end
     pcall(function() timer:stop() end)
     pcall(function() if not timer:is_closing() then timer:close() end end)
   end))
