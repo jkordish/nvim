@@ -344,6 +344,13 @@ You'll use them in that order over weeks. `<leader>` is muscle memory. `<Space><
 - **Snippets** via LuaSnip + friendly-snippets
 - **Linting** via `nvim-lint` (shellcheck, hadolint, markdownlint)
 
+### `user.resume` — task intent across interruptions
+`<leader>Kc` captures the current task (objective, next step, what to verify first, freeform notes). `<leader>Kr` opens the **Resume Brief** — a four-section panel showing what you were doing, what changed in the repo while you were away (commits, file churn, branch divergence) via async `vim.system` probes, and any open threads. `<leader>Kl` lists paused tasks across all projects; `<leader>Kx` resolves the current project's task.
+
+State is project-keyed (git toplevel) and stored at `~/.local/state/nvim/resume_tasks.json`. Switching directories auto-pauses the outgoing task; returning to a project with a paused task surfaces a subtle virtual-text hint on the next BufEnter — no modal prompts, no toasts during steady-state work.
+
+Inspired by [vscode-tacos](https://github.com/jkordish/vscode-tacos); adapted to nvim and scoped to the genuine novelty. Design grounded in Calm Tech (Weiser & Brown 1995) — zero prompts during a focused hour; information surfaces only on natural transition points (DirChanged, FocusGained, BufEnter after pause).
+
 ### AI
 - **Copilot** ghost text completions (`<M-l>` accept, `<M-]/[>` cycle)
 - **Avante** Cursor-style chat agent powered by Claude Sonnet 4.6 (`<leader>aT` toggle, needs `ANTHROPIC_API_KEY`)
@@ -576,6 +583,7 @@ Snacks dashboard pops with `good afternoon, joseph.` and three actions. Pick `r`
 | `explain`      | `:Explain` | `<leader>cX` | Streaming AI explanation of diagnostic — SSE → virt_lines |
 | `timetravel`   | `:TimeTravel` | `<leader>gT` | Scrub the current file across every commit |
 | `macroreg`     | `:Macro{Save,Run}` | `<leader>qm/qM` | Persistent named macro library |
+| `resume`       | `:Resume{Capture,Brief,List,Resolve}` | `<leader>Kc/Kr/Kl/Kx` | Per-project task intent with async Resume Brief (what changed while you were away) · auto-pause on DirChanged · virtual-text hint on return · Calm-Tech (Weiser 1995): zero prompts in steady state |
 
 ### Cockpit / mission control
 | Module | Command | Keymap | What it does |
@@ -751,6 +759,9 @@ Per-language: Go `<leader>dgt/dgl` · Python `<leader>dpt/dpc/dps`
 
 ### Workspace (`<leader>W`)
 `WS` save · `WR` restore · `WL` list
+
+### Resume (`<leader>K`) — task intent across interruptions
+`Kc` capture (objective / next step / verify-first / notes) · `Kr` Resume Brief panel (async what-changed: commits, file churn, branch divergence) · `Kl` list paused tasks across projects · `Kx` resolve current project's task
 
 ### Tabs (`<leader><tab>`) — named, clickable, HCI-grounded
 | key | action |
