@@ -557,6 +557,51 @@ local function _capture_toast(project_basename)
   end, 4000)
 end
 
+local HINT_NS = vim.api.nvim_create_namespace("user_resume_hint")
+
+local function _hint(buf, key, task)
+  if not M.opts.hint_enabled then
+    -- TODO(future): fall back to lualine chip
+    return
+  end
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  for _, ft in ipairs(M.opts.excluded_filetypes or {}) do
+    if vim.bo[buf].filetype == ft then return end
+  end
+
+  local age = task.paused_at and _humanize_age(os.time() - task.paused_at) or "now"
+  local objective = task.objective or "(no objective)"
+  if #objective > 50 then objective = objective:sub(1, 47) .. "…" end
+  local text = "⟳ paused " .. age .. ": " .. objective .. " — <leader>Kr to resume"
+
+  local id = vim.api.nvim_buf_set_extmark(buf, HINT_NS, 0, 0, {
+    virt_text = { { text, "BrandChipAccent" } },
+    virt_text_pos = "eol",
+    hl_mode = "combine",
+  })
+
+  -- Fade timer
+  local cleared = false
+  local function clear()
+    if cleared then return end
+    cleared = true
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_del_extmark, buf, HINT_NS, id)
+    end
+  end
+
+  vim.defer_fn(clear, M.opts.hint_dwell_ms)
+
+  -- Also clear on first cursor move in this buffer
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = buf,
+    once = true,
+    callback = clear,
+  })
+
+  _last_hint[key] = vim.uv.now()
+end
+
 local function _autocmds()
   local grp = vim.api.nvim_create_augroup("user_resume", { clear = true })
 
@@ -633,6 +678,23 @@ local function _autocmds()
           _hint_queue[key] = true
         end
       end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = grp,
+    callback = function(args)
+      local key = _project_key()
+      if not _hint_queue[key] then return end
+      local now = vim.uv.now()
+      local last = _last_hint[key] or 0
+      if (now - last) < M.opts.hint_rate_limit_ms then return end
+      -- skip special filetypes
+      for _, ft in ipairs(M.opts.excluded_filetypes or {}) do
+        if vim.bo[args.buf].filetype == ft then return end
+      end
+      local task = _task(key)
+      if task then _hint(args.buf, key, task); _hint_queue[key] = nil end
     end,
   })
 
