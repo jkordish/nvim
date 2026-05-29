@@ -513,6 +513,50 @@ local function _panel(key, task)
   return panel, changed_section_line
 end
 
+local function _capture_toast(project_basename)
+  -- Tiny brand.win float in top-right, two-key (y/n), 4-sec auto-dismiss.
+  -- We don't use user.toast because it's passive (no input keymaps); we
+  -- want a single-tap accept that doesn't steal focus.
+  local brand = require("user.brand")
+  local text = " capture work in " .. project_basename .. "?  [y]es  [n]o "
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"; vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { text })
+
+  local panel = brand.win({
+    title = "resume",
+    width = math.max(40, #text + 4),
+    height = 1,
+    anchor = "tr",
+    focusable = false,
+    animate = false,
+    buf = buf,
+    close_keys = {},
+  })
+
+  -- Use buffer-local keymaps on the CURRENT buffer (where focus actually is),
+  -- not on the toast's buffer (which we made non-focusable).
+  local target_buf = vim.api.nvim_get_current_buf()
+
+  local function teardown()
+    pcall(vim.keymap.del, "n", "y", { buffer = target_buf })
+    pcall(vim.keymap.del, "n", "n", { buffer = target_buf })
+    if panel and panel.close then panel.close() end
+  end
+
+  vim.keymap.set("n", "y", function() teardown(); M.capture() end,
+    { buffer = target_buf, silent = true, nowait = true })
+  vim.keymap.set("n", "n", teardown,
+    { buffer = target_buf, silent = true, nowait = true })
+
+  -- Auto-dismiss after 4s
+  vim.defer_fn(function()
+    pcall(vim.keymap.del, "n", "y", { buffer = target_buf })
+    pcall(vim.keymap.del, "n", "n", { buffer = target_buf })
+    if panel and panel.close then panel.close() end
+  end, 4000)
+end
+
 local function _autocmds()
   local grp = vim.api.nvim_create_augroup("user_resume", { clear = true })
 
@@ -553,6 +597,52 @@ local function _autocmds()
       -- consumer + render arrive in tasks 8 + 9)
       if _state_of(new_key) == "paused" then
         _hint_queue[new_key] = true
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("FocusLost", {
+    group = grp,
+    callback = function()
+      _last_focus_lost = vim.uv.now()
+      local key = _project_key()
+      if not _project_active_since[key] then
+        _project_active_since[key] = _last_focus_lost
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("FocusGained", {
+    group = grp,
+    callback = function()
+      local now = vim.uv.now()
+      local away = now - _last_focus_lost
+      local key = _project_key()
+      local state = _state_of(key)
+
+      if state == "uncaptured" then
+        local active_since = _project_active_since[key]
+        if away > M.opts.idle_capture_ms
+            and active_since
+            and (now - active_since) > M.opts.idle_capture_ms
+            and not _is_excluded(key) then
+          _capture_toast(vim.fn.fnamemodify(key, ":t"))
+        end
+      elseif state == "paused" then
+        if away > M.opts.idle_hint_ms then
+          _hint_queue[key] = true
+        end
+      end
+    end,
+  })
+
+  -- Track activity inside a project: any text change updates active_since
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = grp,
+    callback = function()
+      local key = _project_key()
+      if not _is_excluded(key) then
+        _project_active_since[key] = _project_active_since[key] or vim.uv.now()
       end
     end,
   })
