@@ -26,7 +26,7 @@
 | `lua/user/resume.lua` | **new** | Module — state, surfaces, autocmds |
 | `lua/user/blackbox.lua` | modify | Add `M.since(epoch_seconds)` helper |
 | `lua/user/state.lua` | modify | Add one `registry()` entry |
-| `lua/plugins/user-modules.lua` | modify | Add `require("user.resume").setup()` + 4 `<leader>t*` keymaps |
+| `lua/plugins/user-modules.lua` | modify | Add `require("user.resume").setup()` + 4 `<leader>R*` keymaps |
 | `README.md` | modify (last task) | Document the new feature |
 | `~/.local/state/nvim/resume_tasks.json` | runtime data | Persisted task state |
 
@@ -120,10 +120,10 @@ Then in the `keys = { … }` table, in the `-- ═════ DAILY ═══�
 
 ```lua
       -- ═════ RESUME (task intent + brief) ═════
-      { "<leader>tc", function() require("user.resume").capture() end, desc = "Resume: capture task" },
-      { "<leader>tr", function() require("user.resume").brief()   end, desc = "Resume: show brief" },
-      { "<leader>tx", function() require("user.resume").resolve() end, desc = "Resume: resolve task" },
-      { "<leader>tl", function() require("user.resume").list()    end, desc = "Resume: list paused tasks" },
+      { "<leader>Rc", function() require("user.resume").capture() end, desc = "Resume: capture task" },
+      { "<leader>Rr", function() require("user.resume").brief()   end, desc = "Resume: show brief" },
+      { "<leader>Rx", function() require("user.resume").resolve() end, desc = "Resume: resolve task" },
+      { "<leader>Rl", function() require("user.resume").list()    end, desc = "Resume: list paused tasks" },
 ```
 
 - [ ] **Step 5: Smoke check — nvim starts clean and the module loads**
@@ -148,7 +148,7 @@ Run:
 ./scripts/doctor.sh keymaps
 ```
 
-Expected: no errors mentioning `<leader>t{c,r,x,l}`. (The `t` namespace was unused; this verifies that's still true after the additions.)
+Expected: no errors mentioning `<leader>R{c,r,x,l}`. (Doctor sweep during the initial Task 1 attempt revealed the original `<leader>t*` prefix collides with treesitter-context and Rust runnables; switched to `R` per the keymap-collision-risk memory. `R` is verified clean here.)
 
 - [ ] **Step 7: Smoke check — `:UserState` lists resume**
 
@@ -179,7 +179,7 @@ resume: scaffold module + wiring + blackbox.since helper
 
 Empty user.resume with no-op M.setup() and four notify-only public
 functions. Registered in state.lua, wired into user-modules.lua phase 3
-with <leader>t{c,r,x,l} keymaps. Adds blackbox.since(epoch_seconds) for
+with <leader>R{c,r,x,l} keymaps. Adds blackbox.since(epoch_seconds) for
 the later "what changed" evidence section.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -425,9 +425,9 @@ EOF
 
 ---
 
-## Task 3: Capture form (`<leader>tc`)
+## Task 3: Capture form (`<leader>Rc`)
 
-Goal: working `<leader>tc` that opens a `brand.win` form, lets the user fill four fields, persists on save. First user-facing milestone.
+Goal: working `<leader>Rc` that opens a `brand.win` form, lets the user fill four fields, persists on save. First user-facing milestone.
 
 **Files:**
 
@@ -594,15 +594,15 @@ nvim
 
 Then in nvim:
 
-1. `<leader>tc` — form should open.
+1. `<leader>Rc` — form should open.
 2. Type an objective on the OBJECTIVE row.
 3. `<Tab>` should jump to NEXT STEP.
 4. Add a next step, `<CR>` to save.
 5. `:UserState` (or `<leader>us`) — confirm `resume` shows non-zero size.
-6. `<leader>tc` again — should prompt "task already exists" and offer edit/overwrite/cancel.
+6. `<leader>Rc` again — should prompt "task already exists" and offer edit/overwrite/cancel.
 7. Pick `edit existing` — form should reopen pre-filled with your values.
 
-Quit nvim. Re-open nvim. `<leader>tc` again — should still show the pre-fill (persistence works).
+Quit nvim. Re-open nvim. `<leader>Rc` again — should still show the pre-fill (persistence works).
 
 Cleanup: `rm ~/.local/state/nvim/resume_tasks.json` for a clean slate before the next task.
 
@@ -611,7 +611,7 @@ Cleanup: `rm ~/.local/state/nvim/resume_tasks.json` for a clean slate before the
 ```bash
 git add lua/user/resume.lua
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
-resume: capture form — <leader>tc opens brand.win, persists on save
+resume: capture form — <leader>Rc opens brand.win, persists on save
 
 Three structured fields (objective / next_step / verify_first) + freeform
 notes, all visible at once via a single brand.win buffer. Tab cycles
@@ -625,7 +625,7 @@ EOF
 
 ---
 
-## Task 4: List (`<leader>tl`) + Resolve (`<leader>tx`)
+## Task 4: List (`<leader>Rl`) + Resolve (`<leader>Rx`)
 
 Goal: two small surfaces that make the data layer inspectable and testable from the keyboard. List shows all captured tasks across projects; resolve deletes the current project's task.
 
@@ -649,7 +649,7 @@ function M.list()
     return pa > pb
   end)
   if #items == 0 then
-    vim.notify("resume: no captured tasks yet · <leader>tc to capture one", vim.log.levels.INFO)
+    vim.notify("resume: no captured tasks yet · <leader>Rc to capture one", vim.log.levels.INFO)
     return
   end
   local labels = {}
@@ -713,11 +713,11 @@ Interactive:
 nvim
 ```
 
-1. `<leader>tc` — capture a task (any objective). Save.
-2. `<leader>tl` — should show one entry: `[active] <project> — <objective>`.
+1. `<leader>Rc` — capture a task (any objective). Save.
+2. `<leader>Rl` — should show one entry: `[active] <project> — <objective>`.
 3. `<Esc>` to dismiss the picker.
-4. `<leader>tx` — should prompt to resolve. Pick `yes`.
-5. `<leader>tl` — should now show "no captured tasks yet".
+4. `<leader>Rx` — should prompt to resolve. Pick `yes`.
+5. `<leader>Rl` — should now show "no captured tasks yet".
 
 Cleanup: `rm -f ~/.local/state/nvim/resume_tasks.json` between runs.
 
@@ -726,7 +726,7 @@ Cleanup: `rm -f ~/.local/state/nvim/resume_tasks.json` between runs.
 ```bash
 git add lua/user/resume.lua
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
-resume: list (<leader>tl) + resolve (<leader>tx)
+resume: list (<leader>Rl) + resolve (<leader>Rx)
 
 list shows all tasks across projects via vim.ui.select, sorted by
 paused_at desc; selecting one cd's into the project root and opens its
@@ -740,9 +740,9 @@ EOF
 
 ---
 
-## Task 5: Resume Brief panel — static (`<leader>tr`)
+## Task 5: Resume Brief panel — static (`<leader>Rr`)
 
-Goal: `<leader>tr` opens the four-section brand.win panel showing **captured** data only. The async "what changed" probes land in Task 6. Footer actions (resume / edit / resolve / close) all wired.
+Goal: `<leader>Rr` opens the four-section brand.win panel showing **captured** data only. The async "what changed" probes land in Task 6. Footer actions (resume / edit / resolve / close) all wired.
 
 **Files:**
 
@@ -859,7 +859,7 @@ function M.brief()
   local key = _project_key()
   local task = _task(key)
   if not task then
-    vim.notify("resume: no paused task here · <leader>tc to capture", vim.log.levels.INFO)
+    vim.notify("resume: no paused task here · <leader>Rc to capture", vim.log.levels.INFO)
     return
   end
   _panel(key, task)
@@ -875,20 +875,20 @@ Interactive:
 nvim
 ```
 
-1. `<leader>tc` — capture a task with `objective`, `next_step`, `verify_first`, `notes`. Save.
-2. `<leader>tr` — panel opens; verify it shows all four sections, VERIFY FIRST at top, "⠋ computing…" placeholder in WHAT CHANGED.
-3. Press `q` — panel closes, task still exists (`<leader>tl` shows it).
-4. `<leader>tr` again, press `r` — panel closes, file from the captured buffer set is reopened, `<leader>tl` shows task as `[active]` (no `paused_at`).
-5. `<leader>tr` again, press `e` — capture form reopens pre-filled.
-6. Save the form, then `<leader>tr` + `x` — confirm resolve, task gone.
-7. `<leader>tr` with no task — should notify "no paused task here".
+1. `<leader>Rc` — capture a task with `objective`, `next_step`, `verify_first`, `notes`. Save.
+2. `<leader>Rr` — panel opens; verify it shows all four sections, VERIFY FIRST at top, "⠋ computing…" placeholder in WHAT CHANGED.
+3. Press `q` — panel closes, task still exists (`<leader>Rl` shows it).
+4. `<leader>Rr` again, press `r` — panel closes, file from the captured buffer set is reopened, `<leader>Rl` shows task as `[active]` (no `paused_at`).
+5. `<leader>Rr` again, press `e` — capture form reopens pre-filled.
+6. Save the form, then `<leader>Rr` + `x` — confirm resolve, task gone.
+7. `<leader>Rr` with no task — should notify "no paused task here".
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add lua/user/resume.lua
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
-resume: brief panel — <leader>tr renders captured data + footer actions
+resume: brief panel — <leader>Rr renders captured data + footer actions
 
 Four-section brand.win panel: VERIFY FIRST → WHAT YOU WERE DOING →
 WHAT CHANGED (placeholder until task 6) → OPEN THREADS. Footer keys:
@@ -1041,7 +1041,7 @@ function M.brief()
   local key = _project_key()
   local task = _task(key)
   if not task then
-    vim.notify("resume: no paused task here · <leader>tc to capture", vim.log.levels.INFO)
+    vim.notify("resume: no paused task here · <leader>Rc to capture", vim.log.levels.INFO)
     return
   end
   local panel, changed_line = _panel(key, task)
@@ -1058,9 +1058,9 @@ cd ~/.config/nvim     # or any repo with recent commits
 nvim
 ```
 
-1. `<leader>tc` — capture a task. Save.
+1. `<leader>Rc` — capture a task. Save.
 2. **Outside nvim** (in another shell): make a trivial commit (e.g. `touch /tmp/dummy && cp /tmp/dummy . && git add . && git -c commit.gpgsign=false commit -m "test"`). Then `git rm dummy && git -c commit.gpgsign=false commit -m "undo"` so the repo is clean again.
-3. Back in nvim: `<leader>tr` — the WHAT CHANGED section should within ~3 seconds show one or more `• N commit(s) since pause` style lines.
+3. Back in nvim: `<leader>Rr` — the WHAT CHANGED section should within ~3 seconds show one or more `• N commit(s) since pause` style lines.
 4. Repeat with **no** intervening commit — section should show `(nothing notable)`.
 5. Test the timeout path: temporarily edit the `run({ "git", "log", ...` line and replace with `run({ "sleep", "5" }, ...)`. Open brief — section should after 3s show `git timed out`. **Revert the change** before committing.
 
@@ -1162,10 +1162,10 @@ cd /tmp/proj-a && git init -q
 nvim
 ```
 
-1. `<leader>tc` — capture a task. Save.
-2. `<leader>tl` — verify it shows `[active]`.
+1. `<leader>Rc` — capture a task. Save.
+2. `<leader>Rl` — verify it shows `[active]`.
 3. `:cd /tmp/proj-b` — triggers DirChanged.
-4. `<leader>tl` — verify the proj-a task is now `[paused]`.
+4. `<leader>Rl` — verify the proj-a task is now `[paused]`.
 5. `:cd /tmp/proj-a` — should re-mark for hint (we can't yet see it; verify by inspecting `_hint_queue` from `:lua`):
 
 ```vim
@@ -1339,7 +1339,7 @@ nvim
 
 Now test the paused-task path:
 
-1. `<leader>tc` capture a task and save.
+1. `<leader>Rc` capture a task and save.
 2. `:cd /tmp` (DirChanged pauses it).
 3. `:cd /tmp/proj-a` (back; new key matches paused — `_hint_queue` gets set).
 4. **Fake the idle** as above. Defocus + refocus.
@@ -1396,7 +1396,7 @@ local function _hint(buf, key, task)
   local age = task.paused_at and _humanize_age(os.time() - task.paused_at) or "now"
   local objective = task.objective or "(no objective)"
   if #objective > 50 then objective = objective:sub(1, 47) .. "…" end
-  local text = "⟳ paused " .. age .. ": " .. objective .. " — <leader>tr to resume"
+  local text = "⟳ paused " .. age .. ": " .. objective .. " — <leader>Rr to resume"
 
   local id = vim.api.nvim_buf_set_extmark(buf, HINT_NS, 0, 0, {
     virt_text = { { text, "BrandChipAccent" } },
@@ -1459,7 +1459,7 @@ cd /tmp/proj-a    # or any git repo with a captured task
 nvim
 ```
 
-1. `<leader>tc` capture, save.
+1. `<leader>Rc` capture, save.
 2. `:cd /tmp` (DirChanged pauses).
 3. `:cd /tmp/proj-a` (queues hint).
 4. `:e some_file.txt` (creates new buffer; BufEnter fires; hint should render).
@@ -1480,7 +1480,7 @@ git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 resume: ambient virtual-text hint on BufEnter
 
 Renders one line of virt_text at the top of the buffer styled with
-BrandChipAccent: "⟳ paused 47m: <objective> — <leader>tr to resume".
+BrandChipAccent: "⟳ paused 47m: <objective> — <leader>Rr to resume".
 Fades after hint_dwell_ms (default 10s) or on first CursorMoved.
 BufEnter consumer drains _hint_queue, respects hint_rate_limit_ms
 per-project and excluded_filetypes. hint_enabled=false short-circuits
@@ -1575,10 +1575,10 @@ git branch other 2>/dev/null
 nvim
 ```
 
-1. `<leader>tc` capture a task (captured branch will be `main` or whatever HEAD is at). Save.
+1. `<leader>Rc` capture a task (captured branch will be `main` or whatever HEAD is at). Save.
 2. `:!git checkout other` — outside nvim semantics: switch branches. Triggers BufEnter (or DirChanged on some setups). Toast should appear within a second or two.
 3. Press `y` — task gets paused.
-4. `<leader>tl` confirms `[paused]`.
+4. `<leader>Rl` confirms `[paused]`.
 
 If the toast doesn't fire on `:!git checkout`, that's because `:!` doesn't auto-fire BufEnter for the same buffer. Workaround: `:e` to re-enter the buffer after the checkout, or rely on the next real BufEnter. Acceptable — branch detection is best-effort.
 
@@ -1639,12 +1639,12 @@ Example block to add (adapt to the file's structure once you read it):
 ```markdown
 ### `user.resume` — task intent across interruptions
 
-`<leader>tc` captures the current task (objective, next step, what to
-verify first, freeform notes). `<leader>tr` opens the **Resume Brief**
+`<leader>Rc` captures the current task (objective, next step, what to
+verify first, freeform notes). `<leader>Rr` opens the **Resume Brief**
 — a four-section panel showing what you were doing, what changed in
 the repo while you were away (commits, file churn, branch divergence),
-and any open threads. `<leader>tl` lists paused tasks across all
-projects; `<leader>tx` resolves the current project's task.
+and any open threads. `<leader>Rl` lists paused tasks across all
+projects; `<leader>Rx` resolves the current project's task.
 
 State is project-keyed (git toplevel) and stored at
 `~/.local/state/nvim/resume_tasks.json`. Switching directories
@@ -1704,7 +1704,7 @@ Spec requirements → task coverage:
 - ✅ Excluded filetypes / paths → enforced in Task 3 (`_is_excluded` in `M.capture`), Task 8 (TextChanged guard), Task 9 (BufEnter + hint).
 - ✅ State registry integration → Task 1.
 - ✅ `blackbox.since()` helper → Task 1.
-- ✅ `<leader>t{c,r,x,l}` wiring → Task 1.
+- ✅ `<leader>R{c,r,x,l}` wiring → Task 1.
 - ✅ VimLeavePre force-save → Task 2.
 - ✅ Calm Tech citation in module header → Task 1.
 - ✅ Smoke matrix + doctor sweep + README → Task 11.

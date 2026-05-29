@@ -31,10 +31,10 @@ One file: `lua/user/resume.lua` (~300 lines, scale comparable to `recall.lua`/`t
 
 ```
 M.setup(opts)        -- entry point; wires autocmds
-M.capture()          -- <leader>tc — opens capture form
-M.brief()            -- <leader>tr — opens Resume Brief panel
-M.resolve()          -- <leader>tx — mark task done
-M.list()             -- <leader>tl — paused tasks across all projects
+M.capture()          -- <leader>Rc — opens capture form
+M.brief()            -- <leader>Rr — opens Resume Brief panel
+M.resolve()          -- <leader>Rx — mark task done
+M.list()             -- <leader>Rl — paused tasks across all projects
 
 -- internal --
 _state               -- in-memory mirror of tasks.json
@@ -49,7 +49,7 @@ _form() / _panel()   -- brand.win surfaces
 ### Wiring (per CLAUDE.md convention)
 
 - **`lua/plugins/user-modules.lua`** Phase 3 (daily-driver tools), after `jobs` and before `spotlight`: `require("user.resume").setup()`.
-- **Keymaps** on the same pseudo-spec's `keys = {...}` table: `<leader>tc`/`tr`/`tx`/`tl`. The `t` leader namespace is currently unused.
+- **Keymaps** on the same pseudo-spec's `keys = {...}` table: `<leader>Rc`/`Rr`/`Rx`/`Rl`. (The original plan targeted `<leader>t*`; doctor sweep during Task 1 revealed collisions with treesitter-context and Rust runnables — moved to `R` per the keymap-collision-risk memory.)
 - **`lua/user/state.lua` registry** gets one new entry:
   ```lua
   { id = "resume", path = STATE_DIR .. "/resume_tasks.json",
@@ -104,7 +104,7 @@ A given project is in exactly one of these states at any time:
 2. **Active** — entry exists, `paused_at = null`. There's intent recorded and you're currently working on it.
 3. **Paused** — entry exists, `paused_at` is an epoch timestamp. The task is parked; resuming sets `paused_at` back to null and increments `resumed_count`.
 
-Transitions: `Uncaptured → Active` via `<leader>tc`. `Active → Paused` via `DirChanged` away. `Paused → Active` via `<leader>tr` `r` (resume). `Active/Paused → Uncaptured` via `<leader>tx` (resolve).
+Transitions: `Uncaptured → Active` via `<leader>Rc`. `Active → Paused` via `DirChanged` away. `Paused → Active` via `<leader>Rr` `r` (resume). `Active/Paused → Uncaptured` via `<leader>Rx` (resolve).
 
 ### Key decisions
 
@@ -123,7 +123,7 @@ Transitions: `Uncaptured → Active` via `<leader>tc`. `Active → Paused` via `
 
 ## Surfaces
 
-### Capture form (`<leader>tc`)
+### Capture form (`<leader>Rc`)
 
 `brand.win` float, ~70 cols × ~14 rows. Three structured fields + freeform notes, all visible at once; user Tab/Shift-Tab between fields.
 
@@ -156,16 +156,16 @@ Transitions: `Uncaptured → Active` via `<leader>tc`. `Active → Paused` via `
 Fires on `BufEnter` into a project with a paused task if `idle_hint_ms` has elapsed since last hint emission. One line of virtual text at top of buffer:
 
 ```
-⟳ paused 47m: refactor token refresh — <leader>tr to resume
+⟳ paused 47m: refactor token refresh — <leader>Rr to resume
 ```
 
 - Color: `BrandChipAccent`.
 - Fades after `hint_dwell_ms` (default 10s) or on first keystroke (`CursorMoved` once + timer).
 - Suppressed if buffer filetype is in `excluded_filetypes` (default list mirrors `today.lua`).
 - Per-project rate limit (`hint_rate_limit_ms`, default 5min).
-- **Disable path:** `opts.hint_enabled = false` falls back to a lualine chip (`⟳ paused`) — the brief is still always reachable via `<leader>tr`.
+- **Disable path:** `opts.hint_enabled = false` falls back to a lualine chip (`⟳ paused`) — the brief is still always reachable via `<leader>Rr`.
 
-### Resume Brief panel (`<leader>tr`)
+### Resume Brief panel (`<leader>Rr`)
 
 `brand.win` float, ~76 cols × ~22 rows. `winhighlight` inherits `FloatBorder` so it retunes with mode-accent per CLAUDE.md.
 
@@ -212,7 +212,7 @@ Each probe shows `⠋ <label>...` until it returns; on completion swaps in the r
 | `x` | Resolve — confirm prompt (`y`/`n`), delete task entry, close panel. |
 | `q` / `<Esc>` | Close — non-destructive; task stays paused. |
 
-### Cross-project list (`<leader>tl`)
+### Cross-project list (`<leader>Rl`)
 
 Small `spotlight.lua`-style float (or `vim.ui.select` if simpler). Lists all paused tasks across all projects, sorted by `paused_at` desc. `<CR>` `cd`s to that project root and opens its brief. Seed of a future cognitive-debrief surface without committing to it.
 
@@ -270,7 +270,7 @@ require("user.resume").setup({
 | Case | Behavior |
 |---|---|
 | No git repo | `project_key` falls back to `cwd`. `WHAT CHANGED` degrades gracefully; git probes hide, shows `(no git)`. |
-| No captured task in current project | `<leader>tr` shows one-line float: *"no paused task here · `<leader>tc` to capture"*. Auto-dismiss on any key. |
+| No captured task in current project | `<leader>Rr` shows one-line float: *"no paused task here · `<leader>Rc` to capture"*. Auto-dismiss on any key. |
 | File deleted/moved between capture and resume | `r` skips missing files silently. Brief marks them in `WHAT CHANGED`: `- 2 captured files no longer exist`. |
 | Branch deleted | Brief renders branch chip in `BrandChipWarn` with `(branch deleted)`. Resume works at cwd level. |
 | Corrupted `resume_tasks.json` | Renamed to `.broken.<ts>`, fresh state, one toast. Matches `suggest.lua` pattern. |
@@ -290,19 +290,19 @@ Per CLAUDE.md: *"there is no test suite. Changes are validated by launching Neov
 
 ### Static checks (must pass before merge)
 
-- `./scripts/doctor.sh keymaps` — no `<leader>t*` collisions after wiring.
+- `./scripts/doctor.sh keymaps` — no `<leader>R*` collisions after wiring.
 - `./scripts/doctor.sh` (default actionable mode) — no new warnings attributable to `user.resume`.
 - `rg "vim\.fn\.system\b" lua/user/resume.lua` — must return nothing. Enforces async-only pattern.
 
 ### Manual smoke matrix (run after impl)
 
-1. **Fresh state:** `<leader>tc` opens form → save → file shows in `:UserState` → `<leader>tr` renders brief.
+1. **Fresh state:** `<leader>Rc` opens form → save → file shows in `:UserState` → `<leader>Rr` renders brief.
 2. **Switch away:** `cd` to another project → first task's `paused_at` set; no prompt (no active task in new project).
 3. **Switch back:** `cd` back → next `BufEnter` shows virtual-text hint exactly once; fades after 10s.
-4. **Persistence:** restart nvim → state survives, `<leader>tl` shows the paused task.
+4. **Persistence:** restart nvim → state survives, `<leader>Rl` shows the paused task.
 5. **Corruption recovery:** `echo garbage > resume_tasks.json` → restart → toast fires, `.broken` archive created, fresh state.
-6. **Resume action:** `<leader>tr` → `r` → buffers reopen, cursor restored, `paused_at` nilled, `resumed_count` incremented.
-7. **Resolve action:** `<leader>tr` → `x` → confirm `y` → task deleted, `:UserState` reflects empty.
+6. **Resume action:** `<leader>Rr` → `r` → buffers reopen, cursor restored, `paused_at` nilled, `resumed_count` incremented.
+7. **Resolve action:** `<leader>Rr` → `x` → confirm `y` → task deleted, `:UserState` reflects empty.
 8. **Idle threshold:** `:lua vim.cmd.doautocmd('FocusGained')` after manually back-dating `_last_focus_lost` → verify capture toast fires at the right threshold.
 9. **Excluded path:** open nvim config dir → no autocmds fire, no hint.
 
@@ -312,18 +312,18 @@ These are reachable in 1-2 lines once the foundation is in place. Not part of th
 
 - **Suggest integration** — `resume_task` action in `lua/user/suggest.lua`'s `ACTIONS`. One entry that fires when current project has a paused task.
 - **Provenance chip** — `● Local-only` / `● AI used` lualine segment via `starship.lua`. TaCoS-flavored but separable concern.
-- **Cognitive Debrief** cross-day view — `<leader>tl` covers the immediate need; richer aggregation can come later.
+- **Cognitive Debrief** cross-day view — `<leader>Rl` covers the immediate need; richer aggregation can come later.
 - **Archive on resolve** — `resume_archive.jsonl` append-only log of finished tasks. Wait for actual demand.
 - **AI integration** — `ai_cmd.lua` hookup to draft `verify_first` or summarize `notes`. Separate concern.
 - **Per-branch tasks within one project** — wait for actual pain. Branch is the differentiator most of the time and shows on the brief header.
-- **Deep evidence tier** (TaCoS Option C) — `<leader>tR` full-split with full blackbox timeline + `git log -p`. Glanceable view probably answers 95%; add only if missed.
+- **Deep evidence tier** (TaCoS Option C) — `<leader>RR` full-split with full blackbox timeline + `git log -p`. Glanceable view probably answers 95%; add only if missed.
 
 ## File-level change summary
 
 | File | Change |
 |---|---|
 | `lua/user/resume.lua` | **new** — ~300 lines, module implementation |
-| `lua/plugins/user-modules.lua` | add `require("user.resume").setup()` in Phase 3; add 4 `<leader>t*` keymaps |
+| `lua/plugins/user-modules.lua` | add `require("user.resume").setup()` in Phase 3; add 4 `<leader>R*` keymaps |
 | `lua/user/state.lua` | add one entry to `registry()` |
 | `lua/user/blackbox.lua` | add `M.since(epoch_seconds)` helper (additive) |
 | `README.md` | add section under user-modules describing resume (after impl, separate commit) |
