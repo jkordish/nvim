@@ -283,6 +283,116 @@ local function _form(existing, snapshot)
   vim.cmd("startinsert!")
 end
 
+-- ─── brief panel ──────────────────────────────────────────────────────────
+local function _resume_buffers(task)
+  if not M.opts.auto_resume_buffers or not task.files then return end
+  for _, rel in ipairs(task.files) do
+    local abs = rel:sub(1, 1) == "/" and rel or (vim.uv.cwd() .. "/" .. rel)
+    if vim.uv.fs_stat(abs) then
+      pcall(vim.cmd, "badd " .. vim.fn.fnameescape(abs))
+    end
+  end
+  if task.cursor and task.cursor.file then
+    local abs = task.cursor.file:sub(1, 1) == "/" and task.cursor.file
+                or (vim.uv.cwd() .. "/" .. task.cursor.file)
+    if vim.uv.fs_stat(abs) then
+      pcall(vim.cmd, "edit " .. vim.fn.fnameescape(abs))
+      pcall(vim.api.nvim_win_set_cursor, 0, { task.cursor.line or 1, (task.cursor.col or 1) - 1 })
+    end
+  end
+end
+
+local function _panel(key, task)
+  local brand = require("user.brand")
+  local basename = vim.fn.fnamemodify(key, ":t")
+  local prev_win = vim.api.nvim_get_current_win()
+  local age = task.paused_at and _humanize_age(os.time() - task.paused_at) or "active"
+  local branch = task.branch or "(no branch)"
+
+  local lines = { "" }
+  local function row(text) table.insert(lines, "  " .. text) end
+  local function section(label) table.insert(lines, ""); row(label); end
+
+  section("VERIFY FIRST")
+  row("  → " .. (task.verify_first and task.verify_first ~= "" and task.verify_first or "(none specified)"))
+
+  section("WHAT YOU WERE DOING")
+  row("  objective: " .. (task.objective or ""))
+  if task.next_step and task.next_step ~= "" then
+    row("  next step: " .. task.next_step)
+  end
+
+  section("WHAT CHANGED WHILE YOU WERE AWAY")
+  row("  ⠋ computing…")     -- placeholder; Task 6 swaps in real probes
+  local changed_section_line = #lines    -- 1-based; remember row to update
+
+  if task.notes and task.notes ~= "" then
+    section("OPEN THREADS")
+    for _, ln in ipairs(vim.split(task.notes, "\n")) do row("  " .. ln) end
+  end
+  if task.blockers and #task.blockers > 0 then
+    if not (task.notes and task.notes ~= "") then section("OPEN THREADS") end
+    for _, b in ipairs(task.blockers) do row("  blocker: " .. b) end
+  end
+
+  table.insert(lines, "")
+  row("[r]esume  [e]dit  [x]resolve  [q]close")
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"; vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+
+  -- Section-label highlighting via extmarks
+  local ns = vim.api.nvim_create_namespace("user_resume_panel")
+  for i, ln in ipairs(lines) do
+    if ln:match("^  [A-Z][A-Z][A-Z]") then
+      vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 0,
+        { end_line = i, hl_group = "BrandChipAccent" })
+    end
+  end
+
+  local panel = brand.win({
+    title = "paused " .. age .. " · " .. branch .. " · " .. basename,
+    width = 78,
+    height = math.min(#lines + 2, 28),
+    anchor = "center",
+    buf = buf,
+    close_keys = { "q", "<Esc>" },
+  })
+
+  -- Footer actions
+  vim.keymap.set("n", "r", function()
+    task.paused_at = nil
+    task.resumed_count = (task.resumed_count or 0) + 1
+    _state.tasks[key] = task
+    _save()
+    panel.close()
+    if vim.api.nvim_win_is_valid(prev_win) then
+      vim.api.nvim_set_current_win(prev_win)
+    end
+    _resume_buffers(task)
+  end, { buffer = buf, silent = true })
+
+  vim.keymap.set("n", "e", function()
+    panel.close()
+    if vim.api.nvim_win_is_valid(prev_win) then
+      vim.api.nvim_set_current_win(prev_win)
+    end
+    M.capture()
+  end, { buffer = buf, silent = true })
+
+  vim.keymap.set("n", "x", function()
+    panel.close()
+    if vim.api.nvim_win_is_valid(prev_win) then
+      vim.api.nvim_set_current_win(prev_win)
+    end
+    M.resolve()
+  end, { buffer = buf, silent = true })
+
+  return panel, changed_section_line
+end
+
 function M.setup(opts)
   M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
   _load()
@@ -315,7 +425,16 @@ function M.capture()
     _form(existing, snapshot)
   end
 end
-function M.brief()    vim.notify("resume: brief (not yet implemented)",   vim.log.levels.INFO) end
+function M.brief()
+  local key = _project_key()
+  local task = _task(key)
+  if not task then
+    vim.notify("resume: no paused task here · <leader>Kc to capture", vim.log.levels.INFO)
+    return
+  end
+  _panel(key, task)
+  -- Task 6 will start async probes here and update the panel buffer in-place
+end
 function M.resolve()
   local key = _project_key()
   local t = _task(key)
