@@ -147,11 +147,18 @@ local function _snapshot_files()
   return files, cursor
 end
 
+-- Single-entry cache keyed by cwd. Branch only changes when the user
+-- runs git outside nvim (or `:!git checkout`) — both rare relative to
+-- BufEnter frequency. DirChanged invalidates below.
+local _branch_cache, _branch_cache_cwd = nil, nil
+
 local function _current_branch(cwd)
   cwd = cwd or vim.uv.cwd()
+  if _branch_cache_cwd == cwd and _branch_cache ~= nil then return _branch_cache end
   local out = vim.fn.systemlist({ "git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD" })
-  if vim.v.shell_error == 0 and out[1] then return out[1] end
-  return nil
+  _branch_cache_cwd = cwd
+  _branch_cache = (vim.v.shell_error == 0 and out[1]) or nil
+  return _branch_cache
 end
 
 local function _humanize_age(seconds)
@@ -513,6 +520,39 @@ local function _panel(key, task)
   return panel, changed_section_line
 end
 
+local function _branch_change_toast(from, to, key, task)
+  local brand = require("user.brand")
+  local text = " branch " .. from .. " → " .. to .. " · pause task?  [y]es  [n]o "
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"; vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { text })
+  local panel = brand.win({
+    title = "resume",
+    width = math.max(50, #text + 4),
+    height = 1,
+    anchor = "tr",
+    focusable = false,
+    animate = false,
+    buf = buf,
+    close_keys = {},
+  })
+  local target_buf = vim.api.nvim_get_current_buf()
+  local function teardown()
+    pcall(vim.keymap.del, "n", "y", { buffer = target_buf })
+    pcall(vim.keymap.del, "n", "n", { buffer = target_buf })
+    if panel and panel.close then panel.close() end
+  end
+  vim.keymap.set("n", "y", function()
+    teardown()
+    task.paused_at = os.time()
+    task.files, task.cursor = _snapshot_files()
+    _save()
+  end, { buffer = target_buf, silent = true, nowait = true })
+  vim.keymap.set("n", "n", teardown,
+    { buffer = target_buf, silent = true, nowait = true })
+  vim.defer_fn(teardown, 4000)
+end
+
 local function _capture_toast(project_basename)
   -- Tiny brand.win float in top-right, two-key (y/n), 4-sec auto-dismiss.
   -- We don't use user.toast because it's passive (no input keymaps); we
@@ -620,10 +660,12 @@ local function _autocmds()
       local old_cwd = _last_cwd
       _last_cwd = new_cwd
 
-      -- _project_key has a single-entry cache; force re-resolve by
-      -- invalidating before asking for the new key.
+      -- _project_key and _current_branch each have a single-entry cwd
+      -- cache; force re-resolve by invalidating both before re-asking.
       _project_key_cache = nil
       _project_key_cwd   = nil
+      _branch_cache      = nil
+      _branch_cache_cwd  = nil
       local new_key = _project_key(new_cwd)
       local old_key = old_cwd and old_cwd ~= "" and _project_key(old_cwd) or nil
       if old_key == new_key then return end
@@ -706,6 +748,28 @@ local function _autocmds()
       if not _is_excluded(key) then
         _project_active_since[key] = _project_active_since[key] or vim.uv.now()
       end
+    end,
+  })
+
+  -- Branch-change detection: poll on common git-affecting events.
+  -- _current_branch caches by cwd, so a BufEnter storm in one repo
+  -- triggers exactly one git call (or zero, when DirChanged hasn't
+  -- invalidated). branch_change_prompt gate runs first so the option
+  -- can short-circuit without paying any cache lookup.
+  local _last_branch = _current_branch()
+  vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter", "DirChanged" }, {
+    group = grp,
+    callback = function()
+      if not M.opts.branch_change_prompt then return end
+      local new_branch = _current_branch()
+      if not new_branch or new_branch == _last_branch then return end
+      local prev_branch = _last_branch
+      _last_branch = new_branch
+      local key = _project_key()
+      local task = _task(key)
+      if not task or _state_of(key) ~= "active" then return end
+      if task.branch == new_branch then return end       -- already aligned
+      _branch_change_toast(prev_branch or "?", new_branch, key, task)
     end,
   })
 end
