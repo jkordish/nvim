@@ -302,6 +302,123 @@ local function _resume_buffers(task)
   end
 end
 
+-- Replace the "WHAT CHANGED" placeholder line (1-based) in a panel buffer
+-- with the computed evidence lines. Falls back to "(no data)" if every
+-- probe yields nothing.
+local function _what_changed(buf, line_idx, key, task)
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+
+  local paused_at = task.paused_at or os.time()
+  local since_iso = os.date("!%Y-%m-%dT%H:%M:%SZ", paused_at)
+  local cwd = key   -- key IS the git toplevel (or cwd) per _project_key
+
+  local results = {}
+  local pending = 0
+
+  local function done()
+    pending = pending - 1
+    if pending > 0 then return end
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+
+    local out = {}
+    for _, r in ipairs(results) do if r and r ~= "" then table.insert(out, "  " .. r) end end
+    if #out == 0 then table.insert(out, "  (nothing notable)") end
+
+    vim.bo[buf].modifiable = true
+    -- replace the single placeholder line at line_idx (1-based)
+    vim.api.nvim_buf_set_lines(buf, line_idx - 1, line_idx, false, out)
+    vim.bo[buf].modifiable = false
+  end
+
+  local function run(cmd, on_result)
+    pending = pending + 1
+    local timed_out, completed = false, false
+    local timer = vim.uv.new_timer()
+    timer:start(3000, 0, vim.schedule_wrap(function()
+      if completed then return end       -- system already settled; bail
+      timed_out = true
+      on_result(nil, true)
+      done()
+      pcall(function() timer:stop(); timer:close() end)
+    end))
+    vim.system(cmd, { text = true, cwd = cwd }, function(res)
+      if timed_out then return end       -- timer already settled; bail
+      completed = true
+      pcall(function() timer:stop(); timer:close() end)
+      vim.schedule(function()
+        on_result(res.code == 0 and res.stdout or nil, false)
+        done()
+      end)
+    end)
+  end
+
+  -- Probe 1: commits since paused_at
+  run({ "git", "log", "--since=" .. since_iso, "--oneline" }, function(stdout, timed_out)
+    if timed_out then table.insert(results, "git timed out") return end
+    if not stdout or stdout == "" then return end
+    local n = 0; for _ in stdout:gmatch("\n") do n = n + 1 end
+    if n == 0 then n = 1 end
+    table.insert(results, "• " .. n .. " commit(s) since pause")
+  end)
+
+  -- Probe 2: file-level churn (diff stat from paused-at-ish anchor)
+  -- approximation: diff against HEAD~N where N = commit count since paused_at
+  run({ "git", "log", "--since=" .. since_iso, "--oneline" }, function(stdout)
+    local n = 0
+    if stdout then for _ in stdout:gmatch("\n") do n = n + 1 end end
+    if n == 0 then return end
+    run({ "git", "diff", "--stat", "HEAD~" .. n .. "..HEAD" }, function(diff_out)
+      if not diff_out or diff_out == "" then return end
+      local last = ""
+      for line in diff_out:gmatch("[^\n]+") do last = line end
+      if last ~= "" then table.insert(results, "• " .. last:gsub("^%s+", "")) end
+    end)
+  end)
+
+  -- Probe 3: branch divergence (only if we know captured branch)
+  if task.branch then
+    run({ "git", "log", "--oneline", task.branch .. "..HEAD" }, function(stdout)
+      if not stdout or stdout == "" then return end
+      local n = 0; for _ in stdout:gmatch("\n") do n = n + 1 end
+      if n > 0 then
+        table.insert(results, "• " .. n .. " commit(s) ahead of captured branch (" .. task.branch .. ")")
+      end
+    end)
+  end
+
+  -- Probe 4: missing-files check
+  pending = pending + 1
+  vim.schedule(function()
+    if task.files then
+      local missing = 0
+      for _, rel in ipairs(task.files) do
+        local abs = rel:sub(1, 1) == "/" and rel or (cwd .. "/" .. rel)
+        if not vim.uv.fs_stat(abs) then missing = missing + 1 end
+      end
+      if missing > 0 then
+        table.insert(results, "• " .. missing .. " captured file(s) no longer exist")
+      end
+    end
+    done()
+  end)
+
+  -- Probe 5: blackbox slice (synchronous, in-memory — cheap)
+  pending = pending + 1
+  vim.schedule(function()
+    local ok, blackbox = pcall(require, "user.blackbox")
+    if ok and blackbox.since then
+      local events = blackbox.since(paused_at)
+      if #events > 0 then
+        local last = events[1]
+        local fmt = os.date("%H:%M", last.t)
+        table.insert(results, "• blackbox: " .. #events ..
+          " event(s), last: " .. (last.kind or "?") .. " at " .. fmt)
+      end
+    end
+    done()
+  end)
+end
+
 local function _panel(key, task)
   local brand = require("user.brand")
   local basename = vim.fn.fnamemodify(key, ":t")
@@ -432,8 +549,8 @@ function M.brief()
     vim.notify("resume: no paused task here · <leader>Kc to capture", vim.log.levels.INFO)
     return
   end
-  _panel(key, task)
-  -- Task 6 will start async probes here and update the panel buffer in-place
+  local panel, changed_line = _panel(key, task)
+  _what_changed(panel.buf, changed_line, key, task)
 end
 function M.resolve()
   local key = _project_key()
