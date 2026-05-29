@@ -32,6 +32,7 @@ return {
       require("user.repl").setup()
       require("user.coverage").setup()
       require("user.jobs").setup()
+      require("user.resume").setup()
       require("user.heatmap").setup()
       require("user.pulse").setup()
       require("user.webhook").setup()
@@ -93,6 +94,12 @@ return {
       { "<leader>ai", function() vim.cmd("AI") end, desc = "AI: ask about cursor context" },
       { "<leader>cX", function() require("user.explain").explain() end, desc = "AI explain diagnostic (streaming)" },
       { "<leader>cl", function() require("user.tsplay").toggle() end, desc = "Treesitter playground" },
+
+      -- ═════ RESUME (task intent + brief) ═════
+      { "<leader>Kc", function() require("user.resume").capture() end, desc = "Resume: capture task" },
+      { "<leader>Kr", function() require("user.resume").brief()   end, desc = "Resume: show brief" },
+      { "<leader>Kx", function() require("user.resume").resolve() end, desc = "Resume: resolve task" },
+      { "<leader>Kl", function() require("user.resume").list()    end, desc = "Resume: list paused tasks" },
 
       -- File / project entry points
       { "<leader>uS", function() require("user.spotlight").open() end, desc = "Spotlight: unified picker" },

@@ -114,4 +114,14 @@ function M.setup()
   vim.api.nvim_create_user_command("Blackbox", M.show, { desc = "Browse the action recorder timeline" })
 end
 
+-- Return blackbox entries newer than the given epoch-seconds timestamp.
+-- Returns a list (most recent first; matches internal `log` ordering).
+function M.since(epoch_seconds)
+  local out = {}
+  for _, e in ipairs(log) do
+    if e.t >= epoch_seconds then table.insert(out, e) else break end
+  end
+  return out
+end
+
 return M

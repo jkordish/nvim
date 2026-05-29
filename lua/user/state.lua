@@ -25,6 +25,8 @@ local function registry()
       desc = "Jira · branch pins · recent issues · saved filters", json = true },
     { id = "confluence", path = STATE_DIR .. "/confluence_cache.json",
       desc = "Confluence · recently viewed pages (yours)",       json = true },
+    { id = "resume",     path = STATE_DIR .. "/resume_tasks.json",
+      desc = "Resume · paused tasks per project + verify-first cues", json = true },
     { id = "tabs",       path = STATE_DIR .. "/tab_names.json",
       desc = "Custom tab names (tabid-keyed, serialized by tabnr)", json = true },
     { id = "tab_undo",   path = STATE_DIR .. "/tab_undo_stack.json",
