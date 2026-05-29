@@ -30,6 +30,9 @@ local _last_focus_lost     = 0     -- uv.now() at last FocusLost
 local _project_active_since = {}   -- { [project_key] = uv.now() } when we first saw activity
 local _hint_queue          = {}    -- { [project_key] = true } — emit on next BufEnter
 local _last_hint           = {}    -- { [project_key] = uv.now() } — rate limit
+local _last_cwd            = nil   -- previous cwd; DirChanged on this nvim
+                                   -- delivers the *new* cwd in args.file, so
+                                   -- we track the prior one ourselves.
 
 -- ─── project key ──────────────────────────────────────────────────────────
 -- Canonical project root. Synchronous on purpose (called from autocmds);
@@ -510,14 +513,59 @@ local function _panel(key, task)
   return panel, changed_section_line
 end
 
+local function _autocmds()
+  local grp = vim.api.nvim_create_augroup("user_resume", { clear = true })
+
+  -- Seed _last_cwd so the very first DirChanged after setup() has a
+  -- prior cwd to compare against.
+  _last_cwd = vim.uv.cwd()
+
+  -- DirChanged (scope=global): project switch. On this nvim, args.file
+  -- carries the *new* cwd (not the previous), so we maintain our own
+  -- _last_cwd as recall.lua does.
+  vim.api.nvim_create_autocmd("DirChanged", {
+    group = grp,
+    pattern = "global",
+    callback = function()
+      local new_cwd = vim.uv.cwd()
+      local old_cwd = _last_cwd
+      _last_cwd = new_cwd
+
+      -- _project_key has a single-entry cache; force re-resolve by
+      -- invalidating before asking for the new key.
+      _project_key_cache = nil
+      _project_key_cwd   = nil
+      local new_key = _project_key(new_cwd)
+      local old_key = old_cwd and old_cwd ~= "" and _project_key(old_cwd) or nil
+      if old_key == new_key then return end
+
+      -- pause the outgoing task if active
+      if old_key and _state_of(old_key) == "active" then
+        local t = _task(old_key)
+        if t then
+          t.paused_at = os.time()
+          t.files, t.cursor = _snapshot_files()
+          _save()
+        end
+      end
+
+      -- enqueue hint if incoming project has a paused task (BufEnter
+      -- consumer + render arrive in tasks 8 + 9)
+      if _state_of(new_key) == "paused" then
+        _hint_queue[new_key] = true
+      end
+    end,
+  })
+end
+
 function M.setup(opts)
   M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
   _load()
+  _autocmds()
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("user_resume_persist", { clear = true }),
     callback = function() _save() end,
   })
-  -- TODO(task-7+): _autocmds()
 end
 
 -- Public API (stubs; filled in later tasks)
