@@ -151,6 +151,131 @@ local function _current_branch(cwd)
   return nil
 end
 
+-- ─── capture form ─────────────────────────────────────────────────────────
+-- Render the capture form as a brand.win float. Single modifiable buffer
+-- with read-only label rows (extmarks), one editable row per field.
+local function _form(existing, snapshot)
+  local brand = require("user.brand")
+  local key = _project_key()
+  local branch = _current_branch() or "(no branch)"
+  local title = existing and "edit this task" or "capture this task"
+  local proj_basename = vim.fn.fnamemodify(key, ":t")
+
+  local lines = {
+    "",
+    "  OBJECTIVE",
+    "  " .. (existing and existing.objective or ""),
+    "",
+    "  NEXT STEP",
+    "  " .. (existing and existing.next_step or ""),
+    "",
+    "  VERIFY FIRST  (what to check before resuming)",
+    "  " .. (existing and existing.verify_first or ""),
+    "",
+    "  NOTES  (optional)",
+    "  " .. (existing and (existing.notes or ""):gsub("\n", " ⏎ ") or ""),
+    "",
+    "  [⏎/^s] save   [tab] next field   [esc] cancel",
+  }
+  -- 0-indexed line numbers of the editable rows:
+  local editable_lines = { 2, 5, 8, 11 }
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+  -- visually mark label + footer lines with Comment hl. Not strictly
+  -- read-only — field() reads by hard-coded indices so accidental edits
+  -- on label rows don't corrupt state, but a user-inserted newline could
+  -- shift subsequent rows. Acceptable for v1; revisit if it bites.
+  local ns = vim.api.nvim_create_namespace("user_resume_form")
+  for i = 0, #lines - 1 do
+    local is_editable = false
+    for _, el in ipairs(editable_lines) do if i == el then is_editable = true; break end end
+    if not is_editable then
+      vim.api.nvim_buf_set_extmark(buf, ns, i, 0, { end_line = i + 1, hl_group = "Comment" })
+    end
+  end
+
+  local panel = brand.win({
+    title = title .. " · " .. proj_basename .. " · " .. branch,
+    width = 76,
+    height = #lines + 2,
+    anchor = "center",
+    buf = buf,
+    close_keys = { "<Esc>" },
+  })
+
+  vim.bo[buf].modifiable = true
+
+  -- Jump cursor to first editable line, column 4 (after "  " prefix)
+  vim.api.nvim_win_set_cursor(panel.win, { editable_lines[1] + 1, 4 })
+
+  -- Tab / Shift-Tab cycles through editable rows
+  local function jump(dir)
+    local cur = vim.api.nvim_win_get_cursor(panel.win)[1] - 1
+    local nxt = nil
+    if dir > 0 then
+      for _, el in ipairs(editable_lines) do if el > cur then nxt = el; break end end
+      nxt = nxt or editable_lines[1]
+    else
+      for i = #editable_lines, 1, -1 do if editable_lines[i] < cur then nxt = editable_lines[i]; break end end
+      nxt = nxt or editable_lines[#editable_lines]
+    end
+    vim.api.nvim_win_set_cursor(panel.win, { nxt + 1, 4 })
+  end
+  vim.keymap.set({ "n", "i" }, "<Tab>",   function() jump( 1) end, { buffer = buf, silent = true })
+  vim.keymap.set({ "n", "i" }, "<S-Tab>", function() jump(-1) end, { buffer = buf, silent = true })
+
+  -- Save: read editable rows, persist
+  local function save()
+    local rows = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local function field(line_idx)
+      local s = rows[line_idx + 1] or ""
+      return (s:gsub("^%s*", ""):gsub("%s+$", ""))
+    end
+    local objective    = field(editable_lines[1])
+    local next_step    = field(editable_lines[2])
+    local verify_first = field(editable_lines[3])
+    local notes        = field(editable_lines[4]):gsub(" ⏎ ", "\n")
+
+    if objective == "" then
+      vim.notify("resume: objective is required", vim.log.levels.WARN)
+      return
+    end
+
+    local now = os.time()
+    local files, cursor = snapshot.files, snapshot.cursor
+    local existing_task = _task(key)
+    local task = existing_task or {}
+    task.objective    = objective
+    task.next_step    = next_step
+    task.verify_first = verify_first
+    task.notes        = notes
+    task.blockers     = task.blockers or {}
+    task.branch       = _current_branch()
+    task.started      = task.started or now
+    task.paused_at    = nil      -- capture = activate
+    task.files        = files
+    task.cursor       = cursor
+    task.resumed_count = task.resumed_count or 0
+    _state.tasks[key] = task
+    _save()
+    panel.close()
+    local ok_toast, toast = pcall(require, "user.toast")
+    if ok_toast then toast.ok("task captured · " .. proj_basename) end
+  end
+
+  vim.keymap.set("n", "<CR>", save, { buffer = buf, silent = true })
+  vim.keymap.set("i", "<C-CR>", function() vim.cmd("stopinsert"); save() end, { buffer = buf, silent = true })
+  vim.keymap.set("i", "<C-s>", function() vim.cmd("stopinsert"); save() end, { buffer = buf, silent = true })
+  vim.keymap.set("n", "<C-s>", save, { buffer = buf, silent = true })
+
+  -- Enter insert at the cursor when entering the buffer
+  vim.cmd("startinsert!")
+end
+
 function M.setup(opts)
   M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
   _load()
@@ -162,7 +287,27 @@ function M.setup(opts)
 end
 
 -- Public API (stubs; filled in later tasks)
-function M.capture()  vim.notify("resume: capture (not yet implemented)", vim.log.levels.INFO) end
+function M.capture()
+  local key = _project_key()
+  if _is_excluded(key) then
+    vim.notify("resume: this path is excluded", vim.log.levels.INFO)
+    return
+  end
+  local files, cursor = _snapshot_files()
+  local snapshot = { files = files, cursor = cursor }
+  local existing = _task(key)
+  if existing and existing.objective and M.opts.confirm_overwrite then
+    vim.ui.select({ "edit existing", "overwrite (start fresh)", "cancel" }, {
+      prompt = "task already exists for " .. vim.fn.fnamemodify(key, ":t") .. ":",
+    }, function(choice)
+      if choice == "edit existing"      then _form(existing, snapshot)
+      elseif choice == "overwrite (start fresh)" then _form(nil, snapshot)
+      end
+    end)
+  else
+    _form(existing, snapshot)
+  end
+end
 function M.brief()    vim.notify("resume: brief (not yet implemented)",   vim.log.levels.INFO) end
 function M.resolve()  vim.notify("resume: resolve (not yet implemented)", vim.log.levels.INFO) end
 function M.list()     vim.notify("resume: list (not yet implemented)",    vim.log.levels.INFO) end
