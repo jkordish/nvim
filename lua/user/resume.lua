@@ -52,19 +52,25 @@ end
 
 -- ─── persistence (atomic save, corruption-recovering load) ────────────────
 local function _save()
-  local tmp = STATE_FILE .. ".tmp"
+  local tmp = STATE_FILE .. ".tmp." .. vim.fn.getpid()
   local ok, encoded = pcall(vim.json.encode, _state)
   if not ok then
     vim.notify("resume: failed to encode state: " .. tostring(encoded), vim.log.levels.ERROR)
     return
   end
+  vim.fn.mkdir(vim.fn.fnamemodify(STATE_FILE, ":h"), "p")
   local f, err = io.open(tmp, "w")
   if not f then
     vim.notify("resume: failed to open " .. tmp .. ": " .. tostring(err), vim.log.levels.ERROR)
     return
   end
   f:write(encoded); f:close()
-  os.rename(tmp, STATE_FILE)
+  local ok_rename, err_rename = os.rename(tmp, STATE_FILE)
+  if not ok_rename then
+    vim.notify("resume: failed to rename " .. tmp .. " → " .. STATE_FILE .. ": " .. tostring(err_rename),
+      vim.log.levels.ERROR)
+    os.remove(tmp)  -- best-effort cleanup; don't propagate further
+  end
 end
 
 local function _load()
@@ -75,19 +81,20 @@ local function _load()
   local ok, decoded = pcall(vim.json.decode, raw)
   if not ok or type(decoded) ~= "table" or type(decoded.tasks) ~= "table" then
     local archive = STATE_FILE .. ".broken." .. os.time()
-    os.rename(STATE_FILE, archive)
+    local ok_rename = os.rename(STATE_FILE, archive)
+    if not ok_rename then
+      os.remove(STATE_FILE)   -- can't archive; at least don't keep failing on it
+    end
     local ok_toast, toast = pcall(require, "user.toast")
     if ok_toast then
       toast.warn("resume state corrupted · archived → " .. vim.fn.fnamemodify(archive, ":t"))
     end
     return
   end
-  _state = decoded
-  if _state.version ~= SCHEMA_VERSION then
-    -- future: migration hook
-    _state.version = SCHEMA_VERSION
-  end
-  _state.tasks = _state.tasks or {}
+  -- Mutate in place so M._internal.state stays the live mirror
+  _state.version = SCHEMA_VERSION
+  _state.tasks = {}
+  for k, v in pairs(decoded.tasks or {}) do _state.tasks[k] = v end
 end
 
 -- ─── lifecycle helpers ────────────────────────────────────────────────────
