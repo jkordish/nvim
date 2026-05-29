@@ -151,6 +151,13 @@ local function _current_branch(cwd)
   return nil
 end
 
+local function _humanize_age(seconds)
+  if seconds < 60 then return seconds .. "s ago" end
+  if seconds < 3600 then return math.floor(seconds / 60) .. "m ago" end
+  if seconds < 86400 then return math.floor(seconds / 3600) .. "h ago" end
+  return math.floor(seconds / 86400) .. "d ago"
+end
+
 -- ─── capture form ─────────────────────────────────────────────────────────
 -- Render the capture form as a brand.win float. Single modifiable buffer
 -- with read-only label rows (extmarks), one editable row per field.
@@ -309,8 +316,59 @@ function M.capture()
   end
 end
 function M.brief()    vim.notify("resume: brief (not yet implemented)",   vim.log.levels.INFO) end
-function M.resolve()  vim.notify("resume: resolve (not yet implemented)", vim.log.levels.INFO) end
-function M.list()     vim.notify("resume: list (not yet implemented)",    vim.log.levels.INFO) end
+function M.resolve()
+  local key = _project_key()
+  local t = _task(key)
+  if not t then
+    vim.notify("resume: no captured task in this project", vim.log.levels.INFO)
+    return
+  end
+  vim.ui.select({ "yes — resolve and delete", "cancel" }, {
+    prompt = "resolve task: " .. (t.objective or "(no objective)") .. "?",
+  }, function(choice)
+    if choice ~= "yes — resolve and delete" then return end
+    _state.tasks[key] = nil
+    _save()
+    local ok_toast, toast = pcall(require, "user.toast")
+    if ok_toast then toast.ok("task resolved · " .. vim.fn.fnamemodify(key, ":t")) end
+  end)
+end
+
+function M.list()
+  local items = {}
+  for k, t in pairs(_state.tasks) do
+    table.insert(items, { key = k, task = t })
+  end
+  table.sort(items, function(a, b)
+    -- nil paused_at (active) → math.huge, so active sorts to top; among
+    -- paused entries, most-recently-paused sorts above older ones.
+    local pa = a.task.paused_at or math.huge
+    local pb = b.task.paused_at or math.huge
+    return pa > pb
+  end)
+  if #items == 0 then
+    vim.notify("resume: no captured tasks yet · <leader>Kc to capture one", vim.log.levels.INFO)
+    return
+  end
+  local labels = {}
+  for _, it in ipairs(items) do
+    local basename = vim.fn.fnamemodify(it.key, ":t")
+    local state = it.task.paused_at and ("paused " .. _humanize_age(os.time() - it.task.paused_at)) or "active"
+    labels[#labels + 1] = string.format("[%s] %s — %s", state, basename, it.task.objective or "(no objective)")
+  end
+  vim.ui.select(labels, { prompt = "resume — paused tasks:" }, function(_, idx)
+    if not idx then return end
+    local choice = items[idx]
+    if not vim.uv.fs_stat(choice.key) then
+      vim.notify("resume: project root no longer exists: " .. choice.key, vim.log.levels.WARN)
+      return
+    end
+    -- tcd matches projects.lua convention (tab-local); fires DirChanged
+    -- which task 7's auto-pause/resume listener will react to.
+    vim.cmd("tcd " .. vim.fn.fnameescape(choice.key))
+    M.brief()
+  end)
+end
 
 -- Internals exposed for use by surfaces (capture/brief/list/resolve) below.
 M._internal = {
