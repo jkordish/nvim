@@ -244,6 +244,32 @@ local ACTIONS = {
     run = function() vim.cmd("write") end,
   },
   {
+    -- user.resume integration: a paused task in this project is the strongest
+    -- "you came back here for a reason" signal. Active task ranks lower
+    -- because the brief is less urgent when you're still in flight.
+    id = "resume_task",
+    when = function(c)
+      local ok, resume = pcall(require, "user.resume")
+      if not ok or not resume._internal then return nil end
+      local key = resume._internal.project_key(c.cwd)
+      if not key or not resume._internal.task(key) then return nil end
+      local state = resume._internal.state_of(key)
+      if state == "paused" then return 80 end
+      if state == "active" then return 50 end
+      return nil
+    end,
+    label = function(c)
+      local resume = require("user.resume")
+      local key = resume._internal.project_key(c.cwd)
+      local task = resume._internal.task(key)
+      local obj = (task.objective or "(no objective)"):gsub("\n.*", "")
+      if #obj > 50 then obj = obj:sub(1, 47) .. "…" end
+      local glyph = resume._internal.state_of(key) == "paused" and "⟳" or "▸"
+      return ("%s resume · %s"):format(glyph, obj)
+    end,
+    run = function() require("user.resume").brief() end,
+  },
+  {
     id = "commit",
     when = function(c) return c.git_dirty > 0 and 75 or nil end,
     label = function(c) return ("commit · %d file%s changed"):format(c.git_dirty, c.git_dirty == 1 and "" or "s") end,
