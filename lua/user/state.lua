@@ -39,6 +39,8 @@ local function registry()
       desc = "Hint chip · shown-count per hint id",              json = true },
     { id = "profiles",   path = STATE_DIR .. "/profiles.json",
       desc = "Filetype auto-layout profiles · enabled set",      json = true },
+    { id = "exec_trust", path = STATE_DIR .. "/exec_trust.json",
+      desc = "Trust store · sha256-keyed allowlist for project-local .suggest.lua / .preflight.lua", json = true },
     { id = "welcome",    path = STATE_DIR .. "/.welcomed",
       desc = "First-launch welcome marker",                      marker = true },
     { id = "tour",       path = STATE_DIR .. "/.toured",

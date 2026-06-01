@@ -22,6 +22,7 @@ return {
       require("user.playbooks").setup()
       require("user.tour").setup()
       require("user.state").setup()
+      require("user._trust").setup()
 
       -- ─── daily-driver tools ───
       require("user.yankring").setup()

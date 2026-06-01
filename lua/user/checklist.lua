@@ -68,9 +68,18 @@ end
 local function load_project_checks()
   local f = vim.fn.getcwd() .. "/.preflight.lua"
   if vim.fn.filereadable(f) == 0 then return default_checks() end
-  local ok, mod = pcall(dofile, f)
-  if not ok or type(mod) ~= "table" then
-    vim.notify("preflight: invalid " .. f, vim.log.levels.WARN)
+  -- Gate dofile through the trust helper: prompts on first sight / sha change.
+  local mod, err = require("user._trust").dofile_if_trusted(f, { label = ".preflight.lua" })
+  if err then
+    require("user.brand").notify("preflight: " .. err, vim.log.levels.WARN, { title = "preflight" })
+    return default_checks()
+  end
+  if mod == nil then
+    -- Declined or prompt pending; fall back to defaults this round.
+    return default_checks()
+  end
+  if type(mod) ~= "table" then
+    require("user.brand").notify("preflight: invalid " .. f, vim.log.levels.WARN, { title = "preflight" })
     return default_checks()
   end
   return mod

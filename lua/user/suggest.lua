@@ -722,12 +722,19 @@ local function load_project_actions(cwd)
   if _project.cwd == cwd and _project.path == path and _project.mtime == stat.mtime.sec then
     return _project.actions
   end
-  -- Reload
-  local ok, result = pcall(dofile, path)
-  if not ok then
+  -- Reload via trust gate — prompts on first sight / on content change.
+  local result, err = require("user._trust").dofile_if_trusted(path, { label = ".suggest.lua" })
+  -- Cache by mtime even on decline/pending so we don't re-prompt every redraw
+  -- this session; mtime change re-attempts (fast path via sha if unchanged).
+  if err then
     pcall(function()
-      require("user.brand").notify(".suggest.lua failed: " .. tostring(result), vim.log.levels.ERROR, { title = "suggest" })
+      require("user.brand").notify(".suggest.lua failed: " .. err, vim.log.levels.ERROR, { title = "suggest" })
     end)
+    _project = { cwd = cwd, mtime = stat.mtime.sec, path = path, actions = {} }
+    return {}
+  end
+  if result == nil then
+    -- User declined or prompt pending; treat as no project actions this round.
     _project = { cwd = cwd, mtime = stat.mtime.sec, path = path, actions = {} }
     return {}
   end

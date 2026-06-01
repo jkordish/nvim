@@ -1,9 +1,16 @@
 -- Webhook receiver: a real HTTP server, inside nvim, via vim.uv TCP.
 -- Examples:
---   curl -X POST http://localhost:7777/open -d '{"path":"/tmp/foo","line":42}'
---   curl -X POST http://localhost:7777/eval -d '{"cmd":"echo \"hi\""}'
---   curl -X POST http://localhost:7777/notify -d '{"msg":"build done","level":"info"}'
--- Auth: optional X-Token header matched against vim.g.webhook_token.
+--   curl -H 'X-Token: $TOK' -X POST http://localhost:7777/open   -d '{"path":"/tmp/foo","line":42}'
+--   curl -H 'X-Token: $TOK' -X POST http://localhost:7777/notify -d '{"msg":"build done","level":"info"}'
+--   curl -H 'X-Token: $TOK' -X POST http://localhost:7777/eval   -d '{"cmd":"echo \"hi\""}'  -- needs explicit opt-in
+--
+-- Security:
+--   * `vim.g.webhook_token` is MANDATORY. Server refuses to start without it.
+--     Pick a long random value (e.g. `string.format("%x", math.random(2^53))`).
+--   * `/eval` runs arbitrary Ex commands; OFF by default. Enable with
+--     `vim.g.webhook_eval_enabled = true` only when you accept the risk.
+--   * Requests carrying an `Origin` or `Sec-Fetch-Site` header (i.e. browser
+--     issued) are rejected outright — closes the CSRF-from-localhost vector.
 local M = {}
 
 M._server = nil
@@ -88,7 +95,20 @@ local function dispatch(client, raw)
   M._req_count = (M._req_count or 0) + 1
   local req = parse_request(raw)
   if not req then reply(client, "400 Bad Request", '{"error":"malformed request"}'); return end
+  -- CSRF guard: browsers always send Origin/Sec-Fetch-Site on cross-origin
+  -- POSTs; legitimate curl/script callers don't. Reject either header's
+  -- presence outright to close the malicious-tab-on-localhost vector.
+  if req.headers["origin"] or req.headers["sec-fetch-site"] then
+    reply(client, "403 Forbidden", '{"error":"browser-issued requests are not accepted"}')
+    return
+  end
   if not check_token(req) then reply(client, "401 Unauthorized", '{"error":"bad x-token"}'); return end
+  -- /eval is opt-in only. Even with a valid token it is refused unless the
+  -- user has flipped vim.g.webhook_eval_enabled.
+  if req.path == "/eval" and vim.g.webhook_eval_enabled ~= true then
+    reply(client, "403 Forbidden", '{"error":"eval disabled; set vim.g.webhook_eval_enabled=true"}')
+    return
+  end
   local key = req.method .. " " .. req.path
   local h = handlers[key]
   if h then h(req, client)
@@ -98,6 +118,14 @@ end
 function M.start(port)
   port = tonumber(port) or 7777
   if M._server then vim.notify("Webhook: already running on :" .. M._port); return end
+  local tok = vim.g.webhook_token
+  if not tok or tok == "" then
+    vim.notify(
+      "Webhook: refusing to start — vim.g.webhook_token is required.\n" ..
+      "Set it (e.g. `vim.g.webhook_token = 'long-random-string'`) and retry.",
+      vim.log.levels.ERROR)
+    return
+  end
   M._server = vim.uv.new_tcp()
   local ok, err = pcall(function() M._server:bind("127.0.0.1", port) end)
   if not ok then vim.notify("Webhook bind failed: " .. (err or "?"), vim.log.levels.ERROR); M._server = nil; return end
