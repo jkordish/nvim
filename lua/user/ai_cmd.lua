@@ -35,6 +35,11 @@ end
 local function call_claude(intent, callback)
   local key = get_key(); if not key then return end
 
+  -- Flip the provenance chip (user.starship reads these globals).
+  vim.g.user_ai_used = true
+  vim.g.user_ai_provider = vim.g.user_ai_provider or "claude"
+  pcall(vim.cmd, "redrawstatus")
+
   local prompt = string.format([[
 You are a Neovim assistant. The user is editing a file and asks for help.
 Their intent: %s

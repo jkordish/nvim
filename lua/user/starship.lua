@@ -542,6 +542,19 @@ function M.modules.cmd_duration()
   return { text = ("  took %s "):format(txt), fg = M.c.yellow, bg = M.c.surface, gui = "italic" }
 end
 
+-- PROVENANCE — TaCoS-style data-posture chip. "● local" by default,
+-- flips to "● <provider>" once any AI call has fired this session.
+-- Always visible — the whole point is ambient awareness of posture
+-- (Calm Tech, Weiser 1995: peripheral information that doesn't demand
+-- attention but lets you know your state at a glance).
+function M.modules.provenance()
+  if vim.g.user_ai_used then
+    local provider = vim.g.user_ai_provider or "ai"
+    return { text = (" ● %s "):format(provider), fg = M.c.base, bg = M.c.yellow, gui = "bold" }
+  end
+  return { text = " ● local ", fg = M.c.base, bg = M.c.green, gui = "bold" }
+end
+
 -- AI STATUS — Copilot indicator (icon-only).
 function M.modules.ai()
   local cop_ok, cop_api = pcall(require, "copilot.api")
@@ -1080,6 +1093,8 @@ end
 -- ─── right half ───────────────────────────────────────────────────────────
 function M.right()
   return M.chain({
+    -- provenance: always visible (no width gate); TaCoS-style data posture
+    M.modules.provenance(),
     -- assistants / timers
     clk(pri(120, M.modules.ai),             cmd("AI")),
     clk(pri(120, M.modules.pomo),           first_of("TimerStop", "TimerSession")),
