@@ -63,9 +63,22 @@ end
 
 -- Wrappers for the common jump verbs. These call the underlying command
 -- first, then pulse. Set via `keys` on a buffer-agnostic basis.
+-- For plain-character keys (gd, gD, …) `normal!` interprets them directly.
 local function _wrap_jump(key)
   return function()
     pcall(vim.cmd, "normal! " .. vim.v.count1 .. key)
+    _jumped()
+  end
+end
+
+-- Termcode keys (<C-o>, <C-i>) can't go through `vim.cmd("normal! ...")` —
+-- the bare argument isn't a vim string literal, so `\<C-o>` would stay
+-- the literal six characters. Wrap in `:execute "normal! \<...>"` so
+-- vim's Ex execute evaluates the inner string and interprets the
+-- keycode. `keyname` is the bare name without angle brackets ("C-o").
+local function _wrap_termcode(keyname)
+  return function()
+    vim.cmd(string.format([[execute "normal! %d\<%s>"]], vim.v.count1, keyname))
     _jumped()
   end
 end
@@ -89,9 +102,9 @@ function M.setup()
     end,
   })
 
-  -- Jumplist navigation
-  vim.keymap.set("n", "<C-o>", _wrap_jump("\\<C-o>"), { silent = true, desc = "Jump back (with pulse)" })
-  vim.keymap.set("n", "<C-i>", _wrap_jump("\\<C-i>"), { silent = true, desc = "Jump forward (with pulse)" })
+  -- Jumplist navigation — termcode form, see _wrap_termcode note above.
+  vim.keymap.set("n", "<C-o>", _wrap_termcode("C-o"), { silent = true, desc = "Jump back (with pulse)" })
+  vim.keymap.set("n", "<C-i>", _wrap_termcode("C-i"), { silent = true, desc = "Jump forward (with pulse)" })
 
   -- Pulse after entering a different buffer via mouse / picker / Telescope
   vim.api.nvim_create_autocmd("BufEnter", {
